@@ -1,0 +1,12 @@
+[package]
+name = "trigpoint"
+version = "0.0.0"
+edition = "2024"
+description = "A WIP tool for creating a spec and a test harness that ensures that your code conforms to the spec through different categories of testing and formal methods"
+license-file = "LICENSE"
+
+[[bin]]
+name = "trigp"
+path = "src/main.rs"
+
+[dependencies]
