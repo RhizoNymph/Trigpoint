@@ -1,0 +1,10 @@
+# Shared config for prod-mode UI fixtures: ClockShim impls may touch time.
+[sim]
+roots = ["main"]
+
+[markers]
+deterministic = ["trigpoint_shims::DeterministicShim", "shims::DeterministicShim"]
+
+[[shims]]
+trait = "ClockShim"
+grants = ["time"]

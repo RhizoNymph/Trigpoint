@@ -1,0 +1,21 @@
+error: nondeterminism sink `std::time::SystemTime::now` (time) called outside a shim impl granting `time`
+  --> $DIR/prod_violation.rs:10:5
+   |
+LL |     std::time::SystemTime::now()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: not inside any shim impl; nondeterminism must enter through a [[shims]] trait so simulation builds can substitute it
+   = help: move this into a granting shim impl, route it through a shim, or `#[allow(shim_nondeterminism)]` with justification
+   = note: `#[deny(shim_nondeterminism)]` on by default
+
+error: nondeterminism sink `std::thread::sleep` (thread) called outside a shim impl granting `thread`
+  --> $DIR/prod_violation.rs:17:16
+   |
+LL |     let f = || std::thread::sleep(std::time::Duration::from_millis(1));
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: not inside any shim impl; nondeterminism must enter through a [[shims]] trait so simulation builds can substitute it
+   = help: move this into a granting shim impl, route it through a shim, or `#[allow(shim_nondeterminism)]` with justification
+
+error: aborting due to 2 previous errors
+

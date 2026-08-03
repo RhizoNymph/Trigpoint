@@ -1,0 +1,12 @@
+error: nondeterminism sink `std::time::SystemTime::now` (time) called outside a shim impl granting `time`
+  --> $DIR/prod_marked.rs:19:9
+   |
+LL |         std::time::SystemTime::now()
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the enclosing impl is for `SimClock`, which is marked deterministic: sim impls receive no capability grants
+   = help: move this into a granting shim impl, route it through a shim, or `#[allow(shim_nondeterminism)]` with justification
+   = note: `#[deny(shim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

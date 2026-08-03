@@ -1,0 +1,17 @@
+error: nondeterminism sink `std::time::SystemTime::now` (time) is reachable from a simulation root
+  --> $DIR/marker.rs:18:9
+   |
+LL |         std::time::SystemTime::now()
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main
+             [1] step
+             [2] <SimClock as ClockShim>::now_millis
+             [3] std::time::SystemTime::now <- sink
+   = note: `SimClock` implements a deterministic marker trait, but this sink is reachable through it: the determinism claim is broken
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

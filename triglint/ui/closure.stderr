@@ -1,0 +1,20 @@
+error: nondeterminism sink `std::time::Instant::now` (time) is reachable from a simulation root
+  --> $DIR/closure.rs:7:34
+   |
+LL |         .map(|i| u128::from(i) + std::time::Instant::now().elapsed().as_millis())
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main
+             [1] std::iter::Iterator::sum
+             [2] <u128 as std::iter::Sum>::sum
+             [3] <std::iter::Map<I, F> as std::iter::Iterator>::fold
+             [4] std::iter::Iterator::fold
+             [5] std::iter::adapters::map::map_fold::{closure#0}
+             [6] main::{closure#0}
+             [7] std::time::Instant::now <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

@@ -1,0 +1,12 @@
+error: nondeterminism sink `std::thread::sleep` (thread) called outside a shim impl granting `thread`
+  --> $DIR/prod_wrong_grant.rs:12:9
+   |
+LL |         std::thread::sleep(std::time::Duration::from_millis(1));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the enclosing `ClockShim` impl grants only [time]
+   = help: move this into a granting shim impl, route it through a shim, or `#[allow(shim_nondeterminism)]` with justification
+   = note: `#[deny(shim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

@@ -1,0 +1,9 @@
+[package]
+name = "trigpoint-shims"
+description = "Marker traits for declaring deterministic simulation shim implementations, consumed by triglint"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]

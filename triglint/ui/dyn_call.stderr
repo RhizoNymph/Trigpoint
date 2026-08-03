@@ -1,0 +1,11 @@
+warning: dyn-dispatch call cannot be resolved statically; the sim-mode determinism guarantee has a hole here
+  --> $DIR/dyn_call.rs:17:5
+   |
+LL |     api.go();
+   |     ^^^^^^^^
+   |
+   = note: reachable from simulation root `main`
+   = note: `#[warn(sim_unresolved)]` on by default
+
+warning: 1 warning emitted
+

@@ -1,0 +1,9 @@
+[package]
+name = "trigpoint-core"
+description = "Spec, invariant, and evidence bookkeeping engine for trigpoint"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]

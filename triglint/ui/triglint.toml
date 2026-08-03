@@ -1,0 +1,7 @@
+# Shared config for all UI fixtures (selected via TRIGLINT_CONFIG in the
+# test harness). Every fixture's entry point is `main`.
+[sim]
+roots = ["main"]
+
+[markers]
+deterministic = ["trigpoint_shims::DeterministicShim", "shims::DeterministicShim"]

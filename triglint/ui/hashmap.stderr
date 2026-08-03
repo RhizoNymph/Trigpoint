@@ -1,0 +1,15 @@
+error: nondeterministic type `std::hash::RandomState` (random) is reachable from a simulation root
+  --> $DIR/hashmap.rs:10:5
+   |
+LL |     m.insert(1, 2);
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main
+             [1] std::hash::RandomState <- sink
+   = note: this type carries per-process random state (e.g. hash-map iteration order differs between runs)
+   = help: use a deterministic replacement in simulation-reachable code (e.g. HashMap with a fixed B$DIRldHasher, or BTreeMap)
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

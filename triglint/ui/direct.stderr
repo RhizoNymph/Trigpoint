@@ -1,0 +1,14 @@
+error: nondeterminism sink `std::time::Instant::now` (time) is reachable from a simulation root
+  --> $DIR/direct.rs:4:13
+   |
+LL |     let _ = std::time::Instant::now();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main
+             [1] std::time::Instant::now <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

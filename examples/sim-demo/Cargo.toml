@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = ["demo-lib", "sim-harness"]
+
+[workspace.metadata.dylint]
+libraries = [{ path = "../../triglint" }]

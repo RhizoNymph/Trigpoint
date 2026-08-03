@@ -1,0 +1,9 @@
+[sim]
+roots = ["sim_harness::main"]
+
+# Prod mode: nondeterminism may only be introduced inside impls of these
+# traits (except impls for DeterministicShim-marked types, which get no
+# grants).
+[[shims]]
+trait = "demo_lib::ClockShim"
+grants = ["time"]

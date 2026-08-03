@@ -1,0 +1,16 @@
+error: nondeterminism sink `std::thread::sleep` (thread) is reachable from a simulation root
+  --> $DIR/transitive.rs:9:5
+   |
+LL |     std::thread::sleep(std::time::Duration::from_millis(1));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main
+             [1] helper
+             [2] pause
+             [3] std::thread::sleep <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

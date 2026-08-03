@@ -1,0 +1,14 @@
+error: nondeterminism sink `getpid` (ffi) is reachable from a simulation root
+  --> $DIR/ffi.rs:8:22
+   |
+LL |     let _ = unsafe { getpid() };
+   |                      ^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main
+             [1] getpid <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+
