@@ -80,10 +80,13 @@ Features Index:
     doc: docs/features/triglint.md
   python_linter:
     description: >
-      PLANNED, not implemented: enforce the DST shim contract on Python
-      codebases (sink calls only inside declared shim implementations),
-      written in Rust on ruff's parser. Not a triglint port — prod-mode
-      analog first; sim-mode reachability is an open question.
+      DESIGNED, not implemented: enforce the DST shim contract on Python
+      codebases in Rust on ruff's parser (pinned 0.0.x). Prod mode: sinks
+      may only be named (called or referenced) inside declared shim
+      protocol impls. Sim mode: import-graph closure from harness root
+      modules must name zero sinks. Dynamic access (importlib, eval,
+      getattr, monkeypatching) is reported as holes. Requires extracting
+      the config schema into a shared stable trigpoint-config crate.
     entry_points: []
     depends_on: []
     doc: docs/features/python-linter.md
