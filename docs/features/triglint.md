@@ -145,9 +145,11 @@ types = []                              # ADT def-paths matched structurally
 # Crates whose bodies we trust without MIR: no traversal, no warning.
 # Sinks still match on the call edge (that is the std fence model).
 trusted_crates = []                     # extends builtin: core, alloc, std,
-                                        # panic_unwind, panic_abort,
-                                        # compiler_builtins, hashbrown,
-                                        # trigpoint_shims
+                                        # proc_macro, panic_unwind,
+                                        # panic_abort, unwind,
+                                        # compiler_builtins,
+                                        # rustc_std_workspace_{core,alloc},
+                                        # hashbrown, trigpoint_shims
 allow = []                              # def-paths permitted to be opaque
 ```
 
@@ -239,7 +241,7 @@ Stdout/stderr are deliberately not sinks (sim logging must work).
      is broken.
    - `SIM_UNRESOLVED` (**warn** by default): missing-MIR edges and inline
      assembly — each a hole in the guarantee.
-   - Each (sink instance, root) pair is reported once (first witness found).
+   - Each (sink def-path, root) pair is reported once (first witness found).
 
 ## Related files
 

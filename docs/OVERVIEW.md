@@ -8,7 +8,8 @@ Overview:
     spec. The first deliverable is triglint: a dylint-based linter that
     enforces the deterministic-simulation-testing (DST) contract — all
     nondeterminism must flow through declared shim traits, and simulation
-    builds must be fully deterministic.
+    builds must be fully deterministic. Motivation and the research
+    direction beyond the linter are recorded in docs/design.md.
   subsystems:
     triglint: >
       Dylint lint library (nightly-pinned, rustc_private). Sim mode:

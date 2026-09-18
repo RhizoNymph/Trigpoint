@@ -77,8 +77,11 @@ a marked sim impl, and feature-gated violations.
 | `crates/trigpoint-shims` | `DeterministicShim` marker trait |
 | `triglint/` | the dylint lint library (own nightly-pinned workspace) |
 | `examples/sim-demo/` | end-to-end demo workspace |
-| `docs/` | architecture overview and feature docs |
+| `docs/` | architecture overview, feature docs, design notes |
 
 Design details live in [`docs/OVERVIEW.md`](docs/OVERVIEW.md) and
 [`docs/features/triglint.md`](docs/features/triglint.md); usage details in
-[`triglint/README.md`](triglint/README.md).
+[`triglint/README.md`](triglint/README.md). The motivation for the project
+and the research direction beyond the linter (property taxonomies,
+assurance cases, the invariant/evidence bookkeeping that `trigpoint-core`
+will become) live in [`docs/design.md`](docs/design.md).
