@@ -1,0 +1,15 @@
+error: nondeterminism sink `std::time::Instant::now` (time) is reachable from a simulation root
+  --> $DIR/async_dyn.rs:13:5
+   |
+LL |     std::time::Instant::now().elapsed().as_secs()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main (constructs the vtable reaching the next entry)
+             [1] work::{closure#0}
+             [2] std::time::Instant::now <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: aborting due to 1 previous error
+

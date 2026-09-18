@@ -12,15 +12,19 @@ Three lints:
   default `HashMap` hasher) is caught structurally in generic arguments,
   since std's inlined MIR erases the constructor call edges. Diagnostics
   carry the full root-to-sink witness chain and call out broken
-  `DeterministicShim` claims.
+  `DeterministicShim` claims. Indirect calls are covered by collecting
+  targets where the indirection is *created* — unsizing coercions to
+  `dyn Trait`, casts reifying functions and closures, and callable pointers
+  baked into constants and statics — so `println!`, async executors,
+  callbacks, and dispatch tables cannot hide a sink.
 - `shim_nondeterminism` (deny, enabled by declaring `[[shims]]`): per-crate,
   sinks may only be *introduced* inside an impl of a shim trait whose
   `grants` cover the capability. Impls for `DeterministicShim`-marked types
   get no grants. `#[allow(shim_nondeterminism)]` on an item is the escape
   hatch.
-- `sim_unresolved` (warn): an edge sim mode cannot see through (dyn
-  dispatch, function pointers, inline asm, missing MIR) — a hole in the
-  guarantee, reported instead of assumed safe.
+- `sim_unresolved` (warn): an edge sim mode cannot see through (missing MIR
+  in an untrusted crate, inline asm) — a hole in the guarantee, reported
+  instead of assumed safe.
 
 ## Usage
 

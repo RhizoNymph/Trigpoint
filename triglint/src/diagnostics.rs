@@ -5,7 +5,7 @@ use rustc_lint::{LateContext, LintContext};
 use rustc_session::lint::Lint;
 use rustc_span::Span;
 
-use crate::callgraph::{SinkKind, Unresolved, UnresolvedKind, Violation};
+use crate::callgraph::{EdgeKind, SinkKind, Unresolved, UnresolvedKind, Violation};
 use crate::prodcheck::{Context, ProdSinkKind, ProdViolation};
 use crate::{SHIM_NONDETERMINISM, SIM_NONDETERMINISM, SIM_UNRESOLVED};
 
@@ -58,7 +58,12 @@ pub fn emit_violation(cx: &LateContext<'_>, violation: &Violation) {
         |diag| {
             let mut rendered = String::from("call chain to sink:");
             for (i, step) in violation.chain.iter().enumerate() {
-                rendered.push_str(&format!("\n  [{i}] {}", step.def_path));
+                let edge = match step.edge_kind {
+                    EdgeKind::Call => "",
+                    EdgeKind::Vtable => " (constructs the vtable reaching the next entry)",
+                    EdgeKind::FnPtr => " (reifies the function pointer reaching the next entry)",
+                };
+                rendered.push_str(&format!("\n  [{i}] {}{edge}", step.def_path));
             }
             rendered.push_str(&format!(
                 "\n  [{}] {} <- sink",
@@ -130,12 +135,6 @@ pub fn emit_prod_violation(cx: &LateContext<'_>, violation: &ProdViolation) {
 
 pub fn emit_unresolved(cx: &LateContext<'_>, unresolved: &Unresolved) {
     let message = match &unresolved.kind {
-        UnresolvedKind::DynDispatch => {
-            "dyn-dispatch call cannot be resolved statically; the sim-mode determinism guarantee has a hole here".to_owned()
-        }
-        UnresolvedKind::FnPointer => {
-            "indirect call through a function pointer cannot be resolved statically; the sim-mode determinism guarantee has a hole here".to_owned()
-        }
         UnresolvedKind::MissingMir { def_path } => format!(
             "no MIR available for `{def_path}`; its body cannot be checked (run with DYLINT_RUSTFLAGS=-Zalways-encode-mir, or trust it via [opaque] in triglint.toml)"
         ),

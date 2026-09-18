@@ -1,11 +1,16 @@
 //! triglint — dylint lints enforcing the trigpoint deterministic-simulation
 //! contract. See docs/features/triglint.md at the repo root.
 //!
-//! v1 is sim mode only: from the `[sim] roots` declared in `triglint.toml`,
-//! no nondeterminism sink may be reachable through the monomorphized call
-//! graph. Edges the analysis cannot see through (dyn dispatch, function
-//! pointers, missing MIR) are surfaced as `sim_unresolved` warnings so the
-//! guarantee is never silently weakened.
+//! Sim mode: from the `[sim] roots` declared in `triglint.toml`, no
+//! nondeterminism sink may be reachable through the monomorphized call
+//! graph. Indirect calls are covered by collecting their targets where the
+//! indirection is created (vtable coercions, function-pointer casts,
+//! callable provenance in constants). Edges the analysis still cannot see
+//! through (missing MIR, inline assembly) are surfaced as `sim_unresolved`
+//! warnings so the guarantee is never silently weakened.
+//!
+//! Prod mode: nondeterminism may only be introduced inside impls of the
+//! declared `[[shims]]` traits.
 
 #![feature(rustc_private)]
 #![warn(unused_extern_crates)]
@@ -60,8 +65,8 @@ rustc_session::declare_lint! {
     /// ### What it does
     ///
     /// Reports call edges reachable from a simulation root that triglint
-    /// cannot see through: dyn dispatch, function pointers, inline assembly,
-    /// and bodies with no MIR available.
+    /// cannot see through: inline assembly, and bodies with no MIR available
+    /// in a crate that is not trusted.
     ///
     /// ### Why is this bad?
     ///

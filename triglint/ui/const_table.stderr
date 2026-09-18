@@ -1,0 +1,27 @@
+error: nondeterminism sink `std::thread::sleep` (thread) is reachable from a simulation root
+  --> $DIR/const_table.rs:13:9
+   |
+LL |         std::thread::sleep(std::time::Duration::from_millis(1));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main (constructs the vtable reaching the next entry)
+             [1] <Sleeper as Handler>::handle
+             [2] std::thread::sleep <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: nondeterminism sink `std::time::SystemTime::now` (time) is reachable from a simulation root
+  --> $DIR/const_table.rs:18:5
+   |
+LL |     std::time::SystemTime::now()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main (reifies the function pointer reaching the next entry)
+             [1] stamp
+             [2] std::time::SystemTime::now <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+
+error: aborting due to 2 previous errors
+

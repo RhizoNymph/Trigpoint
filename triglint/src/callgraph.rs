@@ -8,28 +8,52 @@
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::TerminatorKind;
-use rustc_middle::ty::{self, Instance, InstanceKind, TyCtxt, TypingEnv};
+use rustc_middle::mir::interpret::{AllocId, GlobalAlloc, Scalar};
+use rustc_middle::mir::visit::Visitor;
+use rustc_middle::mir::{
+    self, Body, CastKind, ConstValue, Location, Rvalue, Statement, StatementKind, TerminatorKind,
+};
+use rustc_middle::ty::adjustment::PointerCoercion;
+use rustc_middle::ty::{
+    self, Instance, InstanceKind, Ty, TyCtxt, TypeVisitableExt, TypingEnv, VtblEntry,
+};
 use rustc_span::Span;
 
 use crate::config::Resolved;
 
-/// One node in the traversal tree. `call_span` is the span of the call edge
-/// in the parent's body (`None` for roots); `parent_local` records whether
-/// that span belongs to the local crate and is therefore safe to attach
+/// How control reaches a frame from its parent. Indirect edges are recorded
+/// at the point the indirection is *created*, not where it is invoked: a
+/// vtable's methods are collected at the unsizing coercion, a function's at
+/// the cast that reifies it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EdgeKind {
+    /// A direct call (or drop) terminator.
+    Call,
+    /// A method of a vtable built by an unsizing coercion in the parent.
+    Vtable,
+    /// A function or closure reified into a pointer in the parent.
+    FnPtr,
+}
+
+/// One node in the traversal tree. `call_span` is the span of the edge in
+/// the parent's body (`None` for roots); `parent_local` records whether that
+/// span belongs to the local crate and is therefore safe to attach
 /// diagnostics to.
 struct Frame<'tcx> {
     instance: Instance<'tcx>,
     parent: Option<usize>,
     call_span: Option<Span>,
     parent_local: bool,
+    edge_kind: EdgeKind,
 }
 
 /// A step of a root-to-sink witness chain, rendered for diagnostics.
+/// `call_span`/`edge_kind` describe the *outgoing* edge to the next step.
 pub struct ChainStep {
     pub def_path: String,
     pub call_span: Option<Span>,
     pub is_local: bool,
+    pub edge_kind: EdgeKind,
 }
 
 /// What kind of sink a violation matched.
@@ -57,8 +81,6 @@ pub struct Violation {
 }
 
 pub enum UnresolvedKind {
-    DynDispatch,
-    FnPointer,
     MissingMir { def_path: String },
     InlineAsm,
 }
@@ -80,6 +102,7 @@ pub struct Analysis<'a, 'tcx> {
     worklist: Vec<usize>,
     reported_violations: FxHashSet<(usize, String)>,
     reported_unresolved: FxHashSet<Span>,
+    visited_allocs: FxHashSet<AllocId>,
     pub violations: Vec<Violation>,
     pub unresolved: Vec<Unresolved>,
 }
@@ -96,6 +119,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
             worklist: Vec::new(),
             reported_violations: FxHashSet::default(),
             reported_unresolved: FxHashSet::default(),
+            visited_allocs: FxHashSet::default(),
             violations: Vec::new(),
             unresolved: Vec::new(),
         }
@@ -103,7 +127,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
 
     pub fn run(&mut self, roots: &[Instance<'tcx>]) {
         for &root in roots {
-            self.enqueue(root, None, None, false);
+            self.enqueue(root, None, None, false, EdgeKind::Call);
         }
         while let Some(idx) = self.worklist.pop() {
             self.visit_frame(idx);
@@ -116,6 +140,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
         parent: Option<usize>,
         call_span: Option<Span>,
         parent_local: bool,
+        edge_kind: EdgeKind,
     ) {
         if self.visited.contains_key(&instance) {
             return;
@@ -126,6 +151,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
             parent,
             call_span,
             parent_local,
+            edge_kind,
         });
         self.visited.insert(instance, idx);
         self.worklist.push(idx);
@@ -141,43 +167,41 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
         let caller_trusted = self
             .config
             .is_trusted_crate(&self.crate_name_of(instance.def_id()));
+        let mut constants = ConstOperands::default();
+        constants.visit_body(body);
+        for constant in constants.0 {
+            self.collect_const_operand(idx, caller_local, caller_trusted, instance, constant);
+        }
         for block in body.basic_blocks.iter() {
+            for statement in &block.statements {
+                self.visit_statement(idx, caller_local, caller_trusted, instance, body, statement);
+            }
             let terminator = block.terminator();
             let span = terminator.source_info.span;
             match &terminator.kind {
                 TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. } => {
-                    let func_ty = func.ty(body, self.tcx);
-                    let func_ty = instance.instantiate_mir_and_normalize_erasing_regions(
-                        self.tcx,
-                        self.typing_env,
-                        ty::EarlyBinder::bind(func_ty),
-                    );
+                    let func_ty = self.monomorphize(instance, func.ty(body, self.tcx));
                     match func_ty.kind() {
                         ty::FnDef(def_id, args) => {
                             self.visit_call(idx, caller_local, caller_trusted, *def_id, args, span);
                         }
-                        ty::FnPtr(..) => {
-                            if !caller_trusted {
-                                self.push_unresolved(
-                                    idx,
-                                    UnresolvedKind::FnPointer,
-                                    span,
-                                    caller_local,
-                                );
-                            }
-                        }
+                        // Indirect: the pointee was collected where it was
+                        // reified (see `visit_statement`).
+                        ty::FnPtr(..) => {}
                         _ => {}
                     }
                 }
                 TerminatorKind::Drop { place, .. } => {
-                    let place_ty = place.ty(body, self.tcx).ty;
-                    let place_ty = instance.instantiate_mir_and_normalize_erasing_regions(
-                        self.tcx,
-                        self.typing_env,
-                        ty::EarlyBinder::bind(place_ty),
-                    );
+                    let place_ty = self.monomorphize(instance, place.ty(body, self.tcx).ty);
                     let drop_instance = Instance::resolve_drop_glue(self.tcx, place_ty);
-                    self.handle_callee(idx, caller_local, caller_trusted, drop_instance, span);
+                    self.handle_callee(
+                        idx,
+                        caller_local,
+                        caller_trusted,
+                        drop_instance,
+                        span,
+                        EdgeKind::Call,
+                    );
                 }
                 TerminatorKind::InlineAsm { .. } => {
                     if !caller_trusted {
@@ -187,6 +211,296 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
                 _ => {}
             }
         }
+    }
+
+    /// Collects the *creation* of indirection. A virtual call can only select
+    /// a vtable that some reachable unsizing coercion built, and an indirect
+    /// call can only reach a function that some reachable cast reified, so
+    /// enqueueing targets here covers call sites the traversal cannot resolve.
+    /// Over-approximate by construction: a collected vtable method counts as
+    /// reachable even if it is never actually invoked.
+    fn visit_statement(
+        &mut self,
+        idx: usize,
+        caller_local: bool,
+        caller_trusted: bool,
+        instance: Instance<'tcx>,
+        body: &Body<'tcx>,
+        statement: &Statement<'tcx>,
+    ) {
+        // `Assign` is the only statement kind carrying an `Rvalue`.
+        let StatementKind::Assign(assign) = &statement.kind else {
+            return;
+        };
+        let Rvalue::Cast(CastKind::PointerCoercion(coercion, _), operand, target_ty) = &assign.1
+        else {
+            return;
+        };
+        let span = statement.source_info.span;
+        let operand_ty = self.monomorphize(instance, operand.ty(body, self.tcx));
+        match coercion {
+            PointerCoercion::Unsize => {
+                let target_ty = self.monomorphize(instance, *target_ty);
+                self.collect_vtable(idx, caller_local, caller_trusted, operand_ty, target_ty, span);
+            }
+            PointerCoercion::ReifyFnPointer(_) => {
+                if let ty::FnDef(def_id, args) = *operand_ty.kind()
+                    && let Some(callee) =
+                        Instance::resolve_for_fn_ptr(self.tcx, self.typing_env, def_id, args)
+                {
+                    self.handle_callee(
+                        idx,
+                        caller_local,
+                        caller_trusted,
+                        callee,
+                        span,
+                        EdgeKind::FnPtr,
+                    );
+                }
+            }
+            PointerCoercion::ClosureFnPointer(_) => {
+                if let ty::Closure(def_id, args) = *operand_ty.kind() {
+                    let callee =
+                        Instance::resolve_closure(self.tcx, def_id, args, ty::ClosureKind::FnOnce);
+                    self.handle_callee(
+                        idx,
+                        caller_local,
+                        caller_trusted,
+                        callee,
+                        span,
+                        EdgeKind::FnPtr,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Enqueues everything an unsizing coercion to `dyn Trait` makes
+    /// dynamically callable: the vtable's methods and the object's drop glue.
+    fn collect_vtable(
+        &mut self,
+        idx: usize,
+        caller_local: bool,
+        caller_trusted: bool,
+        source_ty: Ty<'tcx>,
+        target_ty: Ty<'tcx>,
+        span: Span,
+    ) {
+        // The queries below assume monomorphic input; a lint must degrade
+        // rather than ICE on MIR shapes it did not anticipate.
+        if source_ty.has_param() || target_ty.has_param() {
+            return;
+        }
+        let Some((source_ty, target_ty)) = self.unsizing_tails(source_ty, target_ty) else {
+            return;
+        };
+        // Other unsizings (array to slice) build no vtable, and a dyn-to-dyn
+        // upcast reuses one that was built at the original coercion.
+        let ty::Dynamic(predicates, ..) = target_ty.kind() else {
+            return;
+        };
+        if source_ty.is_trait() {
+            return;
+        }
+
+        self.collect_dyn_target(
+            idx,
+            caller_local,
+            caller_trusted,
+            source_ty,
+            predicates,
+            span,
+        );
+    }
+
+    /// Enqueues everything callable through a vtable for `source_ty` viewed
+    /// as the object type described by `predicates`.
+    fn collect_dyn_target(
+        &mut self,
+        idx: usize,
+        caller_local: bool,
+        caller_trusted: bool,
+        source_ty: Ty<'tcx>,
+        predicates: &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>>,
+        span: Span,
+    ) {
+        if let Some(principal) = predicates.principal() {
+            let trait_ref = self
+                .tcx
+                .instantiate_bound_regions_with_erased(principal.with_self_ty(self.tcx, source_ty));
+            if !trait_ref.has_escaping_bound_vars() && !trait_ref.has_non_region_param() {
+                for entry in self.tcx.vtable_entries(trait_ref) {
+                    // Supertrait pointers (`TraitVPtr`) need no separate
+                    // visit: their methods are already listed here.
+                    if let VtblEntry::Method(callee) = entry {
+                        self.handle_callee(
+                            idx,
+                            caller_local,
+                            caller_trusted,
+                            *callee,
+                            span,
+                            EdgeKind::Vtable,
+                        );
+                    }
+                }
+            }
+        }
+
+        if source_ty.needs_drop(self.tcx, self.typing_env) {
+            let callee = Instance::resolve_drop_glue(self.tcx, source_ty);
+            self.handle_callee(
+                idx,
+                caller_local,
+                caller_trusted,
+                callee,
+                span,
+                EdgeKind::Vtable,
+            );
+        }
+    }
+
+    /// Constants and statics can carry function pointers and vtables in
+    /// their bytes (`static TABLE: &[fn()]`, `const HANDLER: &dyn Trait`),
+    /// which no cast in any body reifies. Evaluating the constant and
+    /// following its provenance recovers those targets.
+    fn collect_const_operand(
+        &mut self,
+        idx: usize,
+        caller_local: bool,
+        caller_trusted: bool,
+        instance: Instance<'tcx>,
+        constant: mir::ConstOperand<'tcx>,
+    ) {
+        let span = constant.span;
+        let konst = self.monomorphize(instance, constant.const_);
+        let Ok(value) = konst.eval(self.tcx, self.typing_env, span) else {
+            return;
+        };
+        let alloc_id = match value {
+            ConstValue::Scalar(Scalar::Ptr(pointer, _)) => pointer.provenance.alloc_id(),
+            ConstValue::Indirect { alloc_id, .. } | ConstValue::Slice { alloc_id, .. } => alloc_id,
+            _ => return,
+        };
+        self.collect_alloc(idx, caller_local, caller_trusted, alloc_id, span);
+    }
+
+    fn collect_alloc(
+        &mut self,
+        idx: usize,
+        caller_local: bool,
+        caller_trusted: bool,
+        alloc_id: AllocId,
+        span: Span,
+    ) {
+        // Statics may reference each other cyclically.
+        if !self.visited_allocs.insert(alloc_id) {
+            return;
+        }
+        let Some(alloc) = self.tcx.try_get_global_alloc(alloc_id) else {
+            return;
+        };
+        match alloc {
+            GlobalAlloc::Function { instance, .. } => {
+                self.handle_callee(
+                    idx,
+                    caller_local,
+                    caller_trusted,
+                    instance,
+                    span,
+                    EdgeKind::FnPtr,
+                );
+            }
+            GlobalAlloc::VTable(ty, predicates) => {
+                self.collect_dyn_target(idx, caller_local, caller_trusted, ty, predicates, span);
+            }
+            GlobalAlloc::Memory(alloc) => {
+                let pointers: Vec<AllocId> = alloc
+                    .inner()
+                    .provenance()
+                    .ptrs()
+                    .values()
+                    .map(|provenance| provenance.alloc_id())
+                    .collect();
+                for pointer in pointers {
+                    self.collect_alloc(idx, caller_local, caller_trusted, pointer, span);
+                }
+            }
+            GlobalAlloc::Static(def_id) => {
+                if let Ok(alloc) = self.tcx.eval_static_initializer(def_id) {
+                    let pointers: Vec<AllocId> = alloc
+                        .inner()
+                        .provenance()
+                        .ptrs()
+                        .values()
+                        .map(|provenance| provenance.alloc_id())
+                        .collect();
+                    for pointer in pointers {
+                        self.collect_alloc(idx, caller_local, caller_trusted, pointer, span);
+                    }
+                }
+            }
+            GlobalAlloc::TypeId { .. } => {}
+        }
+    }
+
+    /// Peels a coercion down to the pair of types actually being unsized,
+    /// mirroring rustc's `find_tails_for_unsizing` but returning `None`
+    /// instead of ICEing on shapes it does not recognise.
+    fn unsizing_tails(&self, source: Ty<'tcx>, target: Ty<'tcx>) -> Option<(Ty<'tcx>, Ty<'tcx>)> {
+        match (source.kind(), target.kind()) {
+            (ty::Pat(source, _), ty::Pat(target, _)) => self.unsizing_tails(*source, *target),
+            (ty::Ref(_, source, _), ty::Ref(_, target, _) | ty::RawPtr(target, _))
+            | (ty::RawPtr(source, _), ty::RawPtr(target, _)) => Some(
+                self.tcx
+                    .struct_lockstep_tails_for_codegen(*source, *target, self.typing_env),
+            ),
+            _ => {
+                if let (Some(source), Some(target)) = (source.boxed_ty(), target.boxed_ty()) {
+                    return Some(self.tcx.struct_lockstep_tails_for_codegen(
+                        source,
+                        target,
+                        self.typing_env,
+                    ));
+                }
+                // A wrapper implementing `CoerceUnsized` (Rc, Arc, Pin, ...):
+                // recurse through the single field whose type is coerced.
+                // rustc reads that field's index off `CustomCoerceUnsized`,
+                // which lives in the monomorphization crate; the field whose
+                // type differs identifies it just as well.
+                let (ty::Adt(source_def, source_args), ty::Adt(target_def, target_args)) =
+                    (source.kind(), target.kind())
+                else {
+                    return None;
+                };
+                if source_def != target_def || !source_def.is_struct() {
+                    return None;
+                }
+                for field in &source_def.non_enum_variant().fields {
+                    let source_field = self
+                        .tcx
+                        .normalize_erasing_regions(self.typing_env, field.ty(self.tcx, source_args));
+                    let target_field = self
+                        .tcx
+                        .normalize_erasing_regions(self.typing_env, field.ty(self.tcx, target_args));
+                    if source_field != target_field {
+                        return self.unsizing_tails(source_field, target_field);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn monomorphize<T>(&self, instance: Instance<'tcx>, value: T) -> T
+    where
+        T: ty::TypeFoldable<TyCtxt<'tcx>>,
+    {
+        instance.instantiate_mir_and_normalize_erasing_regions(
+            self.tcx,
+            self.typing_env,
+            ty::EarlyBinder::bind(value),
+        )
     }
 
     fn visit_call(
@@ -200,7 +514,14 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
     ) {
         match Instance::try_resolve(self.tcx, self.typing_env, def_id, args) {
             Ok(Some(callee)) => {
-                self.handle_callee(caller_idx, caller_local, caller_trusted, callee, span);
+                self.handle_callee(
+                    caller_idx,
+                    caller_local,
+                    caller_trusted,
+                    callee,
+                    span,
+                    EdgeKind::Call,
+                );
             }
             Ok(None) => {
                 if !caller_trusted {
@@ -224,6 +545,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
         caller_trusted: bool,
         callee: Instance<'tcx>,
         span: Span,
+        edge_kind: EdgeKind,
     ) {
         let def_id = callee.def_id();
         let paths = self.render_paths(def_id);
@@ -262,17 +584,10 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
         }
 
         match callee.def {
-            InstanceKind::Virtual(..) => {
-                if !caller_trusted {
-                    self.push_unresolved(
-                        caller_idx,
-                        UnresolvedKind::DynDispatch,
-                        span,
-                        caller_local,
-                    );
-                }
-                return;
-            }
+            // The call itself is indirect, but every vtable it could select
+            // was built by an unsizing coercion in reachable code, and those
+            // sites enqueue the impl's methods. Nothing to do here.
+            InstanceKind::Virtual(..) => return,
             InstanceKind::Intrinsic(..) => return,
             _ => {}
         }
@@ -282,7 +597,7 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
         //    call back into user closures, so trust must never fence off
         //    traversal — only excuse missing bodies.
         if self.has_body(callee) {
-            self.enqueue(callee, Some(caller_idx), Some(span), caller_local);
+            self.enqueue(callee, Some(caller_idx), Some(span), caller_local, edge_kind);
             return;
         }
 
@@ -423,19 +738,27 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
     ) -> Vec<ChainStep> {
         let mut steps = Vec::new();
         let mut cursor = Some(idx);
-        let mut edge = final_span.filter(|_| final_span_local).map(|s| (s, true));
+        // The edge out of the frame being processed: its span (kept only
+        // when local, so diagnostics never point into a dependency) and how
+        // control travels along it.
+        let mut edge = (
+            final_span.filter(|_| final_span_local),
+            final_span_local,
+            EdgeKind::Call,
+        );
         while let Some(i) = cursor {
             let frame = &self.frames[i];
-            let (call_span, is_local) = edge.map_or((None, false), |(s, l)| (Some(s), l));
             steps.push(ChainStep {
                 def_path: self.tcx.def_path_str(frame.instance.def_id()),
-                call_span,
-                is_local,
+                call_span: edge.0,
+                is_local: edge.1,
+                edge_kind: edge.2,
             });
-            edge = frame
-                .call_span
-                .filter(|_| frame.parent_local)
-                .map(|s| (s, true));
+            edge = (
+                frame.call_span.filter(|_| frame.parent_local),
+                frame.parent_local,
+                frame.edge_kind,
+            );
             cursor = frame.parent;
         }
         steps.reverse();
@@ -484,6 +807,17 @@ impl<'a, 'tcx> Analysis<'a, 'tcx> {
             .skip_normalization()
             .ty_adt_def()
             .map(|adt| adt.did())
+    }
+}
+
+/// Gathers every constant a body mentions, in statements and terminators
+/// alike, so their bytes can be scanned for callable provenance.
+#[derive(Default)]
+struct ConstOperands<'tcx>(Vec<mir::ConstOperand<'tcx>>);
+
+impl<'tcx> Visitor<'tcx> for ConstOperands<'tcx> {
+    fn visit_const_operand(&mut self, constant: &mir::ConstOperand<'tcx>, _location: Location) {
+        self.0.push(*constant);
     }
 }
 
