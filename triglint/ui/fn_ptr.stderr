@@ -1,0 +1,28 @@
+error: nondeterminism sink `std::thread::sleep` (thread) is reachable from a simulation root
+  --> $DIR/fn_ptr.rs:13:22
+   |
+LL |     let g: fn() = || std::thread::sleep(std::time::Duration::from_millis(1));
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main (reifies the function pointer reaching the next entry)
+             [1] std::ops::FnOnce::call_once
+             [2] main::{closure#0}
+             [3] std::thread::sleep <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+   = note: `#[deny(sim_nondeterminism)]` on by default
+
+error: nondeterminism sink `std::time::Instant::now` (time) is reachable from a simulation root
+  --> $DIR/fn_ptr.rs:6:5
+   |
+LL |     std::time::Instant::now().elapsed().as_secs()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: call chain to sink:
+             [0] main (reifies the function pointer reaching the next entry)
+             [1] tick
+             [2] std::time::Instant::now <- sink
+   = help: route this capability through a shim trait, or declare the callee in triglint.toml ([[sinks]] / [opaque])
+
+error: aborting due to 2 previous errors
+

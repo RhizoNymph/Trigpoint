@@ -17,13 +17,15 @@ deterministic implementations — and a linter proves it.
     your declared simulation entry points, checked by whole-program
     monomorphized reachability across crate boundaries. Sinks are both
     calls (`Instant::now`, `thread::sleep`, FFI, …) and types (`HashMap`'s
-    default `RandomState` hasher, caught structurally). Diagnostics carry
-    the full root-to-sink witness chain.
+    default `RandomState` hasher, caught structurally). Dyn dispatch,
+    function pointers, async, and dispatch tables in constants are covered
+    by collecting targets where the indirection is created. Diagnostics
+    carry the full root-to-sink witness chain.
   - `shim_nondeterminism` (deny): nondeterminism may only be *introduced*
     inside impls of your declared shim traits, checked per-crate.
-  - `sim_unresolved` (warn): anything the analysis cannot see through (dyn
-    dispatch, function pointers, missing MIR) is reported as a hole rather
-    than assumed safe.
+  - `sim_unresolved` (warn): anything the analysis cannot see through
+    (missing MIR in an untrusted crate, inline assembly) is reported as a
+    hole rather than assumed safe.
 - **`trigpoint-shims`** — the `DeterministicShim` marker trait: mark your
   simulation shim impls; triglint holds them to a zero-nondeterminism
   standard.
@@ -75,8 +77,11 @@ a marked sim impl, and feature-gated violations.
 | `crates/trigpoint-shims` | `DeterministicShim` marker trait |
 | `triglint/` | the dylint lint library (own nightly-pinned workspace) |
 | `examples/sim-demo/` | end-to-end demo workspace |
-| `docs/` | architecture overview and feature docs |
+| `docs/` | architecture overview, feature docs, design notes |
 
 Design details live in [`docs/OVERVIEW.md`](docs/OVERVIEW.md) and
 [`docs/features/triglint.md`](docs/features/triglint.md); usage details in
-[`triglint/README.md`](triglint/README.md).
+[`triglint/README.md`](triglint/README.md). The motivation for the project
+and the research direction beyond the linter (property taxonomies,
+assurance cases, the invariant/evidence bookkeeping that `trigpoint-core`
+will become) live in [`docs/design.md`](docs/design.md).
