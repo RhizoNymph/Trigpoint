@@ -75,4 +75,13 @@ Features Index:
     entry_points: [crates/trigpoint-shims/src/lib.rs]
     depends_on: []
     doc: docs/features/triglint.md
+  python_linter:
+    description: >
+      PLANNED, not implemented: enforce the DST shim contract on Python
+      codebases (sink calls only inside declared shim implementations),
+      written in Rust on ruff's parser. Not a triglint port — prod-mode
+      analog first; sim-mode reachability is an open question.
+    entry_points: []
+    depends_on: []
+    doc: docs/features/python-linter.md
 ```
