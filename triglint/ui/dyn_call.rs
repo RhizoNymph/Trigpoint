@@ -1,5 +1,5 @@
-// Dyn dispatch is out of scope for resolution: the analysis reports the
-// hole instead of assuming the callee is safe.
+// Dyn dispatch over a clean impl: collecting the vtable's methods at the
+// coercion site must not manufacture a diagnostic. No output.
 
 trait Api {
     fn go(&self);

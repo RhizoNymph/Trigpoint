@@ -1,4 +1,4 @@
-# triglint — determinism lints (v1.1)
+# triglint — determinism lints (v1.2)
 
 ## Scope
 
@@ -12,9 +12,20 @@ Two complementary guarantees:
 In a simulation build every shim-typed generic parameter is instantiated with
 a sim impl (e.g. `T: ClockShim` = `SimClock`), so the check needs no
 capability-granting logic: the reachable set must simply contain zero sinks.
-Where the analysis cannot see (dyn dispatch, function pointers, missing MIR
-in untrusted crates), it emits a separate *unresolved* warning so the
-guarantee is stated honestly rather than silently weakened.
+Where the analysis cannot see (missing MIR in untrusted crates, inline
+assembly), it emits a separate *unresolved* warning so the guarantee is
+stated honestly rather than silently weakened.
+
+Indirect calls are covered by collecting *where the indirection is created*
+rather than trying to resolve the call site. A virtual call can only select
+a vtable that some reachable unsizing coercion built, and an indirect call
+can only reach a function some reachable cast reified, so triglint scans MIR
+statements for those casts (and constants' bytes for callable provenance)
+and enqueues the targets there. This is deliberately over-approximate: a
+collected vtable method counts as reachable even if it is never invoked.
+It is what closes the `println!` hole — `format_args!` reifies `Display::fmt`
+into a function pointer inside core's argument machinery — as well as async
+(`dyn Future::poll`), callbacks, and `&dyn Trait` dispatch tables.
 
 Sinks come in two kinds: **call sinks** (functions/foreign items matched by
 def-path, prefix, or whole-crate fence) and **type sinks** — ADTs whose mere
@@ -49,13 +60,24 @@ refactor them into your shims); sim mode polices them by reachability.
   that excuses private helpers only called from blessed impls). The shipped
   prod mode is stricter: helpers must be inside the impl or explicitly
   allowed.
-- **Dynamic dispatch resolution**: `dyn Trait` calls are reported as
-  unresolved, not traversed.
-- **Function-pointer tracking**: same treatment as dyn.
+- **Precise indirect-call resolution**: indirect targets are collected at
+  their creation sites, not matched to the call sites that invoke them, so a
+  sink is reported whenever a vtable/function pointer carrying it is built in
+  reachable code — even if that particular entry is never called.
+- **Indirection arriving from outside the analyzed program**: a vtable or
+  function pointer synthesized by FFI or `transmute` has no creation site in
+  MIR, so nothing collects it. Genuinely uncovered; FFI itself is a sink, so
+  the usual path to such a pointer is already denied.
 - **Per-crate summary caching**: cross-crate MIR is re-traversed each run.
 - Ambient nondeterminism invisible to any call graph (thread scheduling,
   allocator/pointer-address ordering). Residual risk; covered operationally
   by single-threaded sim executors and double-run comparison, not by triglint.
+- **Address nondeterminism** (`ptr as usize`, `{:p}`, hashing pointers) is
+  not a call and not yet a capability; ASLR makes it vary between runs.
+- **Life-before-main** (link-section initializers, `#[ctor]`): unreachable
+  from any declared root by construction.
+- **One cfg per run**: sinks behind features that are not compiled in are not
+  analyzed; run the lint over the feature combinations you ship.
 
 ## Toolchain model
 
@@ -182,14 +204,32 @@ Stdout/stderr are deliberately not sinks (sim logging must work).
      4. otherwise (opaque): trusted callee crate, trusted *caller* crate, or
         allow-listed → skip; foreign item → ffi violation; else →
         *unresolved: no MIR* warning.
-   - `InstanceKind::Virtual` (dyn) and `FnPtr` callee types → *unresolved*
-     warning at the call site. Intrinsics and drop glue without MIR are
-     skipped. Unresolved warnings (all kinds) are suppressed when the
-     *calling* frame is in a trusted crate: std/core dispatch through dyn
-     constantly (fmt, panic hooks) and the user cannot act on those; sink
-     matching is unaffected by this suppression.
-   - A parent map `Instance → (caller Instance, call span)` records the
-     traversal tree for witness reconstruction.
+   - `InstanceKind::Virtual` (dyn) and `FnPtr` callee types are skipped at
+     the call site: their targets are collected where the indirection was
+     created (below). Intrinsics and drop glue without MIR are skipped.
+     Unresolved warnings are suppressed when the *calling* frame is in a
+     trusted crate — std/core bottom out in opaque syscall shims the user
+     cannot act on; sink matching is unaffected by this suppression.
+   - **Statement scan** (same bodies, `Rvalue::Cast` only):
+     - `PointerCoercion::Unsize` → peel the coercion to the pair of types
+       being unsized (refs/raw pointers/`Box` via
+       `struct_lockstep_tails_for_codegen`; `CoerceUnsized` wrappers like
+       `Rc`/`Pin` by recursing through the field whose type differs). If the
+       target is `dyn Trait`, enqueue every `VtblEntry::Method` of
+       `tcx.vtable_entries` plus the concrete type's drop glue.
+     - `ReifyFnPointer` → `Instance::resolve_for_fn_ptr`;
+       `ClosureFnPointer` → `Instance::resolve_closure(.., FnOnce)`.
+   - **Constant scan**: every constant a body mentions is monomorphized and
+     evaluated, then its allocation's provenance is followed
+     (`GlobalAlloc::Function` → enqueue; `VTable` → enqueue as above;
+     `Static`/`Memory` → recurse, guarded by a visited-alloc set). This
+     catches `static TABLE: [fn(); N]` and `const H: &dyn Trait`, which no
+     cast reifies.
+   - Collected targets run through the same classification as call edges, so
+     a sink behind a vtable is a violation, not an unresolved warning.
+   - A parent map `Instance → (caller Instance, span, edge kind)` records the
+     traversal tree for witness reconstruction; chain steps whose outgoing
+     edge is indirect are labelled in the diagnostic.
 5. **Diagnostics**:
    - `SIM_NONDETERMINISM` (**deny** by default): primary span is the deepest
      call site on the witness chain that lies in local code; notes list the
@@ -197,8 +237,8 @@ Stdout/stderr are deliberately not sinks (sim logging must work).
      chain belongs to an impl whose self type implements a configured
      deterministic marker trait, the diagnostic says which determinism claim
      is broken.
-   - `SIM_UNRESOLVED` (**warn** by default): dyn calls, fn-pointer calls,
-     missing-MIR edges — each a hole in the guarantee.
+   - `SIM_UNRESOLVED` (**warn** by default): missing-MIR edges and inline
+     assembly — each a hole in the guarantee.
    - Each (sink instance, root) pair is reported once (first witness found).
 
 ## Related files
@@ -208,7 +248,7 @@ Stdout/stderr are deliberately not sinks (sim logging must work).
 | `triglint/Cargo.toml`, `triglint/rust-toolchain` | nightly-pinned dylint library workspace |
 | `triglint/src/lib.rs` | lint registration, `check_crate` orchestration |
 | `triglint/src/config.rs` | `triglint.toml` schema (serde), discovery, builtin sink DB, unit tests |
-| `triglint/src/callgraph.rs` | sim mode: monomorphized worklist traversal, call/type sink matching, witness chains |
+| `triglint/src/callgraph.rs` | sim mode: monomorphized worklist traversal, call/type sink matching, vtable + fn-pointer + constant collection, witness chains |
 | `triglint/src/prodcheck.rs` | prod mode: per-body direct-sink scan, blessing resolution |
 | `triglint/src/diagnostics.rs` | violation/unresolved emission (sim: crate-level; prod: node-level for `#[allow]`) |
 | `triglint/ui/*` | sim-mode UI fixtures + expected stderr (no shims configured) |
@@ -229,7 +269,14 @@ Stdout/stderr are deliberately not sinks (sim logging must work).
   as trusted can never mask a declared sink inside it.
 - No violation and no unresolved warning ⇒ every reachable call edge from the
   roots was resolved and sink-free; this is the evidence statement sim mode
-  contributes to the broader trigpoint bookkeeping.
+  contributes to the broader trigpoint bookkeeping. It rests on one stated
+  assumption: every vtable and function pointer callable at runtime was
+  created by a cast or constant in code reachable from the roots (violated
+  only by pointers conjured through FFI or `transmute`).
+- Indirect collection must never *fence* traversal the way trust does: the
+  targets are enqueued through the same callee classification as direct
+  calls, so sink matching, type sinks, and witness chains behave identically
+  whether an edge was direct or collected.
 - Type sinks are matched on generic arguments at every call edge, before
   trust checks, so std's MIR inlining and trusted-crate fencing can never
   hide a nondeterministic type.

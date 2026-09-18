@@ -17,13 +17,15 @@ deterministic implementations — and a linter proves it.
     your declared simulation entry points, checked by whole-program
     monomorphized reachability across crate boundaries. Sinks are both
     calls (`Instant::now`, `thread::sleep`, FFI, …) and types (`HashMap`'s
-    default `RandomState` hasher, caught structurally). Diagnostics carry
-    the full root-to-sink witness chain.
+    default `RandomState` hasher, caught structurally). Dyn dispatch,
+    function pointers, async, and dispatch tables in constants are covered
+    by collecting targets where the indirection is created. Diagnostics
+    carry the full root-to-sink witness chain.
   - `shim_nondeterminism` (deny): nondeterminism may only be *introduced*
     inside impls of your declared shim traits, checked per-crate.
-  - `sim_unresolved` (warn): anything the analysis cannot see through (dyn
-    dispatch, function pointers, missing MIR) is reported as a hole rather
-    than assumed safe.
+  - `sim_unresolved` (warn): anything the analysis cannot see through
+    (missing MIR in an untrusted crate, inline assembly) is reported as a
+    hole rather than assumed safe.
 - **`trigpoint-shims`** — the `DeterministicShim` marker trait: mark your
   simulation shim impls; triglint holds them to a zero-nondeterminism
   standard.

@@ -49,7 +49,9 @@ Features Index:
   triglint_sim_mode:
     description: >
       Whole-program analysis asserting zero nondeterminism sinks (call and
-      type sinks) reachable from declared simulation roots.
+      type sinks) reachable from declared simulation roots, including
+      indirect targets collected at vtable coercions, function-pointer
+      casts, and callable provenance inside constants.
     entry_points: [triglint/src/lib.rs, triglint.toml]
     depends_on: [trigpoint_shims_markers]
     doc: docs/features/triglint.md
