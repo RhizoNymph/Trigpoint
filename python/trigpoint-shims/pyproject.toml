@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trigpoint-shims"
+version = "0.0.1"
+description = "Marker base classes consumed by trigpoint's Python determinism linter"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "RhizoNymph" }]
+keywords = ["determinism", "simulation", "testing", "dst", "linter"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/RhizoNymph/Trigpoint"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trigpoint_shims"]

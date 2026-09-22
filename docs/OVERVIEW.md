@@ -22,6 +22,11 @@ Overview:
     trigpoint-shims: >
       Stable, dependency-free crate exporting marker traits (DeterministicShim)
       that analyzed codebases use to declare simulation shim impls.
+    trigpoint-shims (python): >
+      python/trigpoint-shims/: the PyPI sibling of that crate, a
+      dependency-free package exporting the DeterministicShim marker base
+      class for analyzed Python codebases. Same role, same contract, no
+      runtime behavior.
     trigpoint-core: >
       Future home of the spec/invariant/evidence bookkeeping engine.
       Placeholder today.
@@ -32,7 +37,9 @@ Overview:
       database and evidence aggregation are future work.
     examples: >
       Example workspaces used as end-to-end integration targets for triglint
-      (a toy sim harness with clock shims).
+      (sim-demo: a toy Rust sim harness with clock shims) and for the designed
+      Python linter (py-demo: the same shape in Python — ClockShim protocol,
+      marked SimClock, quarantined violation module, [python] triglint.toml).
   data_flow: >
     A user codebase declares shim traits (e.g. ClockShim) and marks sim impls
     with trigpoint_shims::DeterministicShim. It configures triglint.toml at

@@ -1,3 +1,6 @@
 target/
 
 docs/design.md
+
+__pycache__/
+*.egg-info/

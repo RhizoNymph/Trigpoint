@@ -274,7 +274,9 @@ DYLINT_RUSTFLAGS — so orchestration is just config discovery + invocation.
 4. Sim mode (import closure + witness chains) + fixtures.
 5. `trigp lint` target detection + `--python`/`--rust`.
 6. `trigpoint-shims` PyPI package (separate `python/` directory,
-   pyproject.toml, no publish automation yet).
+   pyproject.toml, no publish automation yet) — **done**, together with
+   `examples/py-demo/`, the fixture-scale integration target the steps above
+   must lint clean.
 
 ## Related files (planned)
 
@@ -288,4 +290,5 @@ DYLINT_RUSTFLAGS — so orchestration is just config discovery + invocation.
 | `crates/trigpoint-pylint/src/simscope.rs` | import graph, closure, witness chains |
 | `crates/trigpoint-pylint/src/diagnostics.rs` | annotate-snippets rendering, allow-comment handling |
 | `crates/trigpoint-pylint/fixtures/` | golden-file test corpus |
-| `python/trigpoint-shims/` | PyPI marker package (`DeterministicShim`) |
+| `python/trigpoint-shims/` | PyPI marker package (`DeterministicShim`) — **exists**: hatchling, no deps, no publish automation |
+| `examples/py-demo/` | **exists**: end-to-end integration target — `ClockShim` protocol, marked `SimClock`, blessed `SystemClock` in `pydemo.prod`, quarantined `pydemo.violate`, `[python]` triglint.toml |
