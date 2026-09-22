@@ -25,11 +25,28 @@ Overview:
     trigpoint-core: >
       Future home of the spec/invariant/evidence bookkeeping engine.
       Placeholder today.
+    trigpoint-pylint: >
+      Stable-workspace library enforcing the same DST contract on Python
+      sources, in Rust on ruff's parser (ruff_python_parser/ruff_python_ast
+      pinned = 0.0.13). It has no MIR and no types, so it works on names:
+      per-module binding tables resolve expressions to qualified names, which
+      are matched against a Python sink database. Prod mode
+      (shim-nondeterminism) allows a sink to be named — called or merely
+      referenced — only inside a class whose bases include a declared shim
+      protocol granting the capability. Sim mode (sim-nondeterminism) walks
+      the import graph from configured root modules and allows zero sinks in
+      the closure, with the import chain as the witness. Dynamic access
+      (importlib, eval/exec, non-literal getattr on modules, monkeypatching,
+      opaque imports) is reported as unresolved warnings rather than assumed
+      safe. Diagnostics render through annotate-snippets.
     trigpoint-cli: >
       Orchestrator binary (`trigp`, package name `trigpoint`). `trigp lint`
-      drives cargo-dylint with DYLINT_RUSTFLAGS=-Zalways-encode-mir merged
-      in, offers --fresh cache busting, and propagates exit codes. Spec
-      database and evidence aggregation are future work.
+      detects which targets a workspace declares: dylint metadata in a
+      Cargo.toml runs triglint via cargo-dylint (DYLINT_RUSTFLAGS=-Zalways-
+      encode-mir merged in, --fresh cache busting), a [python] section in
+      triglint.toml runs trigpoint-pylint in-process; --rust/--python
+      restrict. A deny-level finding from either fails the run. Spec database
+      and evidence aggregation are future work.
     examples: >
       Example workspaces used as end-to-end integration targets for triglint
       (a toy sim harness with clock shims).
@@ -45,6 +62,17 @@ Overview:
     call edges and generic-argument types against the sink database. Both
     emit deny-by-default diagnostics; sim violations carry the full
     root-to-sink witness chain.
+
+    A Python codebase declares the same intent in the same file: a [python]
+    section of triglint.toml names source_roots, [[python.shims]] protocol
+    classes with their grants, and [python.sim] root modules. `trigp lint`
+    reads it without a compiler — trigpoint-pylint parses the sources with
+    ruff's parser, builds a module table and per-module binding tables,
+    resolves expressions to qualified names, and runs the same two rules:
+    prod mode scans every module for sinks named outside a granting shim
+    class, sim mode walks the import closure from the roots and allows none
+    at all. Anything it cannot resolve is reported as an unresolved warning,
+    so what the analysis did not see is stated rather than assumed.
 
 Features Index:
   triglint_sim_mode:
@@ -66,9 +94,15 @@ Features Index:
     doc: docs/features/triglint.md
   trigp_lint:
     description: >
-      CLI orchestration of cargo-dylint (env merging, cache busting, exit
-      codes) so users need no dylint folklore.
-    entry_points: [crates/trigpoint-cli/src/lint.rs]
+      CLI target detection and orchestration: cargo-dylint for the Rust
+      target (env merging, cache busting) when a Cargo.toml declares dylint
+      libraries, trigpoint-pylint in-process for the Python target when
+      triglint.toml has a [python] section, both when both, --rust/--python
+      to restrict. Exit codes are unified across the two.
+    entry_points:
+      - crates/trigpoint-cli/src/lint.rs
+      - crates/trigpoint-cli/src/lint/dylint.rs
+      - crates/trigpoint-cli/src/lint/python.rs
     depends_on: [triglint_sim_mode]
     doc: docs/features/triglint.md
   trigpoint_shims_markers:
@@ -80,14 +114,26 @@ Features Index:
     doc: docs/features/triglint.md
   python_linter:
     description: >
-      DESIGNED, not implemented: enforce the DST shim contract on Python
-      codebases in Rust on ruff's parser (pinned 0.0.x). Prod mode: sinks
-      may only be named (called or referenced) inside declared shim
-      protocol impls. Sim mode: import-graph closure from harness root
-      modules must name zero sinks. Dynamic access (importlib, eval,
-      getattr, monkeypatching) is reported as holes. Requires extracting
-      the config schema into a shared stable trigpoint-config crate.
-    entry_points: []
-    depends_on: []
+      Enforces the DST shim contract on Python codebases, in Rust on ruff's
+      parser (pinned = 0.0.13). Prod mode (shim-nondeterminism): sinks may
+      only be named — called or referenced — inside classes whose bases
+      include a declared shim protocol granting the capability; a
+      deterministic marker among the bases annuls the grants. Sim mode
+      (sim-nondeterminism): the import-graph closure from configured root
+      modules must name zero sinks, with the import chain as the witness;
+      marked implementations that do are reported as broken claims. Dynamic
+      access (importlib, eval/exec, non-literal getattr on modules,
+      monkeypatching, star imports and opaque imports) is reported as
+      unresolved warnings. Escape hatch: `# triglint: allow(<lint>)` on the
+      line, the line above, or the enclosing def/class header. The `[python]`
+      config schema lives in the crate for now and moves into the shared
+      trigpoint-config crate when that lands.
+    entry_points:
+      - crates/trigpoint-pylint/src/lib.rs
+      - crates/trigpoint-pylint/src/prodcheck.rs
+      - crates/trigpoint-pylint/src/simscope.rs
+      - crates/trigpoint-cli/src/lint/python.rs
+      - triglint.toml
+    depends_on: [trigp_lint]
     doc: docs/features/python-linter.md
 ```
