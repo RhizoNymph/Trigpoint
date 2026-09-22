@@ -17,8 +17,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run triglint over a workspace via cargo-dylint, with dependency MIR
-    /// encoding set up so cross-crate analysis works.
+    /// Run the determinism lints a workspace declares: triglint via
+    /// cargo-dylint for Rust (with dependency MIR encoding set up so
+    /// cross-crate analysis works) and trigpoint-pylint for Python.
     Lint(lint::LintArgs),
 }
 

@@ -877,7 +877,9 @@ dependencies = [
  "clap",
  "serde_json",
  "thiserror",
+ "toml",
  "trigpoint-core",
+ "trigpoint-pylint",
 ]
 
 [[package]]
