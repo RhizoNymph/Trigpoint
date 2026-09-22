@@ -1,0 +1,1 @@
+deny sim-nondeterminism src/pkg/sub/deep.py:3:9 time time.time witness=pkg.harness > pkg.sub.deep

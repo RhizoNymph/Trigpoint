@@ -1,0 +1,5 @@
+[python]
+source_roots = ["src"]
+
+[python.sim]
+roots = ["app.harness"]

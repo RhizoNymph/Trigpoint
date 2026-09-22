@@ -1,0 +1,1 @@
+deny sim-nondeterminism src/app/simclock.py:13:16 time time.time witness=app.harness > app.simclock broken-claim:SimClock

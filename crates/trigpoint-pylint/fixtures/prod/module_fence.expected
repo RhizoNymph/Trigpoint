@@ -1,0 +1,1 @@
+deny shim-nondeterminism module_fence.py:5:12 random random.choice unblessed
