@@ -19,6 +19,12 @@ Overview:
       that nondeterminism is only introduced inside declared shim-trait
       impls (shim_nondeterminism). Lives in triglint/ as its own workspace
       because it links rustc internals; analyzed codebases stay on stable.
+      Its config schema lives in trigpoint-config, reached by path dep.
+    trigpoint-config: >
+      Stable crate holding the triglint.toml schema (serde), discovery, and
+      the builtin sink database — deliberately rustc-free so every consumer
+      can share it. Carries a lenient passthrough for the [python] table
+      until the Python analysis lands its typed schema here.
     trigpoint-shims: >
       Stable, dependency-free crate exporting marker traits (DeterministicShim)
       that analyzed codebases use to declare simulation shim impls.
@@ -126,8 +132,9 @@ Features Index:
       monkeypatching, star imports and opaque imports) is reported as
       unresolved warnings. Escape hatch: `# triglint: allow(<lint>)` on the
       line, the line above, or the enclosing def/class header. The `[python]`
-      config schema lives in the crate for now and moves into the shared
-      trigpoint-config crate when that lands.
+      config schema lives in the crate for now, slated to move into the
+      shared trigpoint-config crate (which accepts the section as an
+      unvalidated passthrough today).
     entry_points:
       - crates/trigpoint-pylint/src/lib.rs
       - crates/trigpoint-pylint/src/prodcheck.rs
