@@ -102,15 +102,15 @@ modules), each reported at its site within checked scope.
   per-module import/alias tables, not a type system.
 - Diagnostics: `annotate-snippets`, pinned `= 0.12.16` (rustc's own renderer,
   maintained under rust-lang).
-- Config: the `triglint.toml` schema grows a `[python]` section. The long-term
-  home is a shared stable crate `crates/trigpoint-config` (triglint's
-  `config.rs` is already deliberately rustc-free, so it can move as-is), which
-  a sibling workstream is extracting. Until it lands, `[python]` is parsed by
-  `crates/trigpoint-pylint/src/config.rs`, which reads the same file
-  *tolerantly*: only `[python]` is deserialized and every other top-level key
-  is ignored, so the two schemas coexist in one file while they live in two
-  crates. The `[python]` table itself is `deny_unknown_fields`, so typos in it
-  are still errors.
+- Config: the `triglint.toml` schema grows a `[python]` section, defined in
+  the shared stable crate `crates/trigpoint-config`
+  (`trigpoint_config::python`) alongside the Rust lints' tables, so every
+  consumer validates the whole file strictly — a typo in either half is an
+  error everywhere, including a `[python]` typo surfacing through triglint.
+  `crates/trigpoint-pylint/src/config.rs` re-exports the schema and adds
+  what only the Python analysis needs: the `Resolved` query view (folding in
+  the builtin Python sink database) and discovery anchored at a start
+  directory (`$TRIGLINT_CONFIG`, else nearest `triglint.toml` walking up).
 - Marker: a dependency-free PyPI package **`trigpoint-shims`** exporting
   `class DeterministicShim: ...` (and nothing else), mirroring the Rust
   crate's role: analyzed codebases depend on it solely to declare intent.
@@ -328,10 +328,12 @@ than assuming safety.
    therefore reports at the *use* sites — which, by the reify rule, already
    includes bare references, so nothing reachable escapes — and sim mode
    reports at the import. `prodcheck.rs` carries the same note.
-2. **No `crates/trigpoint-config` yet.** Step 1 of the plan is a sibling
-   workstream. `crates/trigpoint-pylint/src/config.rs` holds the `[python]`
-   schema and parses `triglint.toml` tolerantly in the meantime; the module
-   doc-comment records that it merges into the shared crate when that lands.
+2. **The `[python]` schema was born in this crate, then moved.** Step 1 of
+   the plan was a sibling workstream, so `trigpoint-pylint` initially held
+   the schema and parsed `triglint.toml` tolerantly (only `[python]` read,
+   other top-level keys ignored). Since unification the schema lives in
+   `trigpoint_config::python`, parsing goes through the full shared strict
+   `Config`, and unknown top-level keys are errors for the Python path too.
 3. **`asyncio` is not a blanket fence.** The design listed "`asyncio` streams"
    under `net`. A whole-module `asyncio` fence would swallow every sim harness
    that runs an event loop, and `asyncio.sleep` is already a `time` sink, so
@@ -379,9 +381,9 @@ than assuming safety.
 ## Implementation plan (status)
 
 1. ✅ `crates/trigpoint-config`: extract triglint's config module into the
-   stable workspace; repoint triglint (path dep). *Remaining follow-up:
-   move the `[python]` schema there from `trigpoint-pylint` and drop the
-   passthrough field.*
+   stable workspace; repoint triglint (path dep); the `[python]` schema
+   lives there too (`trigpoint_config::python`), typed, with no
+   passthrough.
 2. ✅ `crates/trigpoint-pylint` skeleton: module collection, binding tables,
    qualified-name resolution + unit tests.
 3. ✅ Prod mode + fixture harness (fixtures written first).
@@ -398,7 +400,7 @@ than assuming safety.
 |---|---|
 | `crates/trigpoint-pylint/Cargo.toml` | exact pins: `ruff_python_parser`/`ruff_python_ast`/`ruff_text_size` `= 0.0.13`, `annotate-snippets` `= 0.12.16` |
 | `crates/trigpoint-pylint/src/lib.rs` | orchestration: config → resolve → prod/sim scans → diagnostics; `Analysis`, `analyze`, `run`, allow-comment suppression |
-| `crates/trigpoint-pylint/src/config.rs` | `[python]` schema, tolerant `triglint.toml` parsing, discovery, `Resolved` query view (moves into `trigpoint-config`) |
+| `crates/trigpoint-pylint/src/config.rs` | re-exports the shared schema; `Resolved` query view, strict parsing via `trigpoint_config::Config`, discovery |
 | `crates/trigpoint-pylint/src/resolve.rs` | `Program`: module table + one binding table per module |
 | `crates/trigpoint-pylint/src/resolve/modules.rs` | `source_roots` → dotted module paths, parsing, relative-import arithmetic |
 | `crates/trigpoint-pylint/src/resolve/bindings.rs` | binding tables, star-import fixpoint, `Expr` → qualified-name resolution |
@@ -414,6 +416,6 @@ than assuming safety.
 | `crates/trigpoint-cli/src/lint.rs` | `trigp lint` args, target detection, unified exit code |
 | `crates/trigpoint-cli/src/lint/python.rs` | the Python target: analyze, print, decide the exit code |
 | `crates/trigpoint-cli/src/lint/dylint.rs` | the Rust target: cargo-dylint orchestration, dylint-metadata detection |
-| `crates/trigpoint-config` | shared `triglint.toml` schema (moved from `triglint/src/config.rs`); the `[python]` schema is slated to move here |
+| `crates/trigpoint-config` | shared `triglint.toml` schema: the Rust tables (from `triglint/src/config.rs`) and the `[python]` section (`src/python.rs`) |
 | `python/trigpoint-shims/` | PyPI marker package (`DeterministicShim`): hatchling, no deps, no publish automation |
 | `examples/py-demo/` | end-to-end integration target — `ClockShim` protocol, marked `SimClock`, blessed `SystemClock` in `pydemo.prod`, quarantined `pydemo.violate`, `[python]` triglint.toml |

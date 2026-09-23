@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
+pub mod python;
+
 /// Environment variable overriding config discovery. Used by UI tests and by
 /// orchestration that knows exactly which config applies.
 pub const CONFIG_ENV: &str = "TRIGLINT_CONFIG";
@@ -56,14 +58,11 @@ pub struct Config {
     pub prod: Prod,
     #[serde(default)]
     pub opaque: Opaque,
-    /// Lenient passthrough for the `[python]` table so a `triglint.toml`
-    /// carrying Python configuration parses here without tripping
-    /// `deny_unknown_fields`. The real Python schema is **not** defined in
-    /// this crate yet: the `feat/python-linter` workstream owns it and will
-    /// move its typed schema into this crate, replacing this field. Nothing
-    /// should interpret this value in the meantime.
+    /// The `[python]` half of the schema, consumed by `trigpoint-pylint`.
+    /// The Rust-side lints ignore it, but it is fully typed here so a typo
+    /// anywhere in the file is an error for every consumer.
     #[serde(default)]
-    pub python: Option<toml::Value>,
+    pub python: Option<python::PythonConfig>,
 }
 
 /// A shim trait declaration: impls of `trait` may touch the `grants`
@@ -499,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn python_section_passes_through() {
+    fn python_section_parses_typed() {
         let config: Config = toml::from_str(
             r#"
             [sim]
@@ -517,10 +516,20 @@ mod tests {
             "#,
         )
         .expect("config with a [python] section should parse");
-        assert!(config.python.is_some());
+        let python = config.python.as_ref().expect("[python] should be present");
+        assert_eq!(python.source_roots, [PathBuf::from("src")]);
+        assert_eq!(python.sim.roots, ["myproj.sim.harness"]);
+        assert_eq!(python.shims[0].protocol, "myproj.shims.ClockShim");
         // The Rust-side view is unaffected by it.
         let resolved = Resolved::new(config);
         assert!(resolved.matches_root(&["sim_harness::main"]));
+    }
+
+    #[test]
+    fn python_typos_are_rejected() {
+        let error = toml::from_str::<Config>("[python]\nsource_rootz = []\n")
+            .expect_err("typos inside [python] should be errors");
+        assert!(error.to_string().contains("source_rootz"), "{error}");
     }
 
     #[test]
