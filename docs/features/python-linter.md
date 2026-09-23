@@ -378,18 +378,19 @@ than assuming safety.
 
 ## Implementation plan (status)
 
-1. ⏳ `crates/trigpoint-config`: extract triglint's config module into the
-   stable workspace; add the `[python]` schema; repoint triglint
-   (path dep) — its UI tests must stay green untouched. *Sibling workstream;
-   `trigpoint-pylint` deliberately does not depend on it yet.*
+1. ✅ `crates/trigpoint-config`: extract triglint's config module into the
+   stable workspace; repoint triglint (path dep). *Remaining follow-up:
+   move the `[python]` schema there from `trigpoint-pylint` and drop the
+   passthrough field.*
 2. ✅ `crates/trigpoint-pylint` skeleton: module collection, binding tables,
    qualified-name resolution + unit tests.
 3. ✅ Prod mode + fixture harness (fixtures written first).
 4. ✅ Sim mode (import closure + witness chains) + fixtures.
 5. ✅ `trigp lint` target detection + `--python`/`--rust`.
-6. ⏳ `trigpoint-shims` PyPI package (separate `python/` directory,
-   pyproject.toml, no publish automation yet). *Sibling workstream; the
-   linter needs only the qualified name, not the package.*
+6. ✅ `trigpoint-shims` PyPI package (separate `python/` directory,
+   pyproject.toml, no publish automation), together with
+   `examples/py-demo/`, the end-to-end integration target the linter must
+   keep clean.
 
 ## Related files
 
@@ -413,5 +414,6 @@ than assuming safety.
 | `crates/trigpoint-cli/src/lint.rs` | `trigp lint` args, target detection, unified exit code |
 | `crates/trigpoint-cli/src/lint/python.rs` | the Python target: analyze, print, decide the exit code |
 | `crates/trigpoint-cli/src/lint/dylint.rs` | the Rust target: cargo-dylint orchestration, dylint-metadata detection |
-| `crates/trigpoint-config` | *planned*: shared `triglint.toml` schema (moved from `triglint/src/config.rs`) |
-| `python/trigpoint-shims/` | *planned*: PyPI marker package (`DeterministicShim`) |
+| `crates/trigpoint-config` | shared `triglint.toml` schema (moved from `triglint/src/config.rs`); the `[python]` schema is slated to move here |
+| `python/trigpoint-shims/` | PyPI marker package (`DeterministicShim`): hatchling, no deps, no publish automation |
+| `examples/py-demo/` | end-to-end integration target — `ClockShim` protocol, marked `SimClock`, blessed `SystemClock` in `pydemo.prod`, quarantined `pydemo.violate`, `[python]` triglint.toml |

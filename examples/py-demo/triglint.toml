@@ -1,0 +1,16 @@
+[python]
+# Import-resolution roots, relative to this file.
+source_roots = ["src"]
+
+[python.sim]
+# Module paths of simulation harness entry modules.
+roots = ["pydemo.sim.harness"]
+
+# Prod mode: nondeterminism may only be named inside classes implementing
+# these protocols (except classes marked deterministic, which get no grants).
+[[python.shims]]
+protocol = "pydemo.shims.ClockShim"
+grants = ["time"]
+
+[python.markers]
+deterministic = ["trigpoint_shims.DeterministicShim"]
