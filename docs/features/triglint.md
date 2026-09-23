@@ -249,7 +249,8 @@ Stdout/stderr are deliberately not sinks (sim logging must work).
 |---|---|
 | `triglint/Cargo.toml`, `triglint/rust-toolchain` | nightly-pinned dylint library workspace |
 | `triglint/src/lib.rs` | lint registration, `check_crate` orchestration |
-| `triglint/src/config.rs` | `triglint.toml` schema (serde), discovery, builtin sink DB, unit tests |
+| `crates/trigpoint-config/src/lib.rs` | `triglint.toml` schema (serde), discovery, builtin sink DB, unit tests — stable crate, shared with the Python analysis |
+| `triglint/src/config.rs` | thin re-export of `trigpoint-config` under the name the lint code uses |
 | `triglint/src/callgraph.rs` | sim mode: monomorphized worklist traversal, call/type sink matching, vtable + fn-pointer + constant collection, witness chains |
 | `triglint/src/prodcheck.rs` | prod mode: per-body direct-sink scan, blessing resolution |
 | `triglint/src/diagnostics.rs` | violation/unresolved emission (sim: crate-level; prod: node-level for `#[allow]`) |

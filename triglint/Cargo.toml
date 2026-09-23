@@ -10,9 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 dylint_linting = "6.0.1"
-serde = { version = "1.0.219", features = ["derive"] }
-thiserror = "2.0.12"
-toml = "0.8.23"
+trigpoint-config = { path = "../crates/trigpoint-config" }
 
 [dev-dependencies]
 dylint_testing = "6.0.1"
