@@ -1,0 +1,1 @@
+deny sim-nondeterminism src/app/inner.py:5:12 time time.time witness=app.harness > app.middle > app.inner

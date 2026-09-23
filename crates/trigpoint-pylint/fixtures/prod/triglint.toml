@@ -1,0 +1,22 @@
+# Keys belonging to the Rust linter's schema. The Python config reader must
+# ignore them entirely rather than failing on unknown fields.
+[sim]
+roots = ["demo::main"]
+
+[[shims]]
+trait = "demo::ClockShim"
+grants = ["time"]
+
+[python]
+source_roots = ["."]
+
+[[python.shims]]
+protocol = "shimdefs.ClockShim"
+grants = ["time"]
+
+[[python.shims]]
+protocol = "shimdefs.EntropyShim"
+grants = ["random"]
+
+[python.markers]
+deterministic = ["trigpoint_shims.DeterministicShim"]

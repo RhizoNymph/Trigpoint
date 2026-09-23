@@ -1,0 +1,1 @@
+deny shim-nondeterminism bare_reference.py:5:12 time time.time unblessed

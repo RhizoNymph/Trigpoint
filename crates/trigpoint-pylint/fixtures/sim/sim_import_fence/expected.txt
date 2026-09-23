@@ -1,0 +1,2 @@
+deny sim-nondeterminism src/app/engine.py:1:1 random import:random witness=app.harness > app.engine
+deny sim-nondeterminism src/app/engine.py:5:12 random random.random witness=app.harness > app.engine

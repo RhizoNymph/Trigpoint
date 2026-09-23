@@ -1,0 +1,1 @@
+warn unresolved dynamic_attr.py:5:12 dynamic-attribute getattr(time)
