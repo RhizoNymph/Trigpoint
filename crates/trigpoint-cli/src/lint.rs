@@ -1,19 +1,25 @@
-//! `trigp lint`: orchestrates cargo-dylint so users don't have to know the
-//! environment folklore (DYLINT_RUSTFLAGS vs RUSTFLAGS, cache busting when
-//! MIR flags change).
+//! `trigp lint`: runs whichever determinism checks the workspace declares.
+//!
+//! Target detection is config-driven. A `triglint.toml` carrying a `[python]`
+//! section means there are Python sources to check; a `Cargo.toml` at or above
+//! the directory declaring dylint libraries means there is a Rust target.
+//! Whichever applies runs; both run when both apply. `--rust` / `--python`
+//! override the detection explicitly.
+//!
+//! The two paths could not be less alike: the Rust one shells out to
+//! cargo-dylint under a pinned nightly with MIR encoding arranged, the Python
+//! one is a library call. Exit codes are unified — any deny-level finding from
+//! either fails the run.
+
+pub mod dylint;
+pub mod python;
 
 use std::env;
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use thiserror::Error;
-
-/// Flag that makes dependency bodies traversable by triglint. Passed via
-/// DYLINT_RUSTFLAGS (never RUSTFLAGS, which leaks into cargo-dylint's
-/// stable-toolchain probes and breaks library discovery).
-pub const ALWAYS_ENCODE_MIR: &str = "-Zalways-encode-mir";
 
 #[derive(clap::Args)]
 pub struct LintArgs {
@@ -28,6 +34,12 @@ pub struct LintArgs {
     /// reported as sim_unresolved warnings instead of being traversed.
     #[arg(long)]
     pub no_deps_mir: bool,
+    /// Check only the Rust target (cargo-dylint).
+    #[arg(long)]
+    pub rust: bool,
+    /// Check only the Python target.
+    #[arg(long)]
+    pub python: bool,
     /// Extra arguments passed through to `cargo check` (e.g. --features).
     #[arg(last = true)]
     pub cargo_args: Vec<OsString>,
@@ -37,7 +49,9 @@ pub struct LintArgs {
 pub enum LintError {
     #[error("failed to resolve current directory: {0}")]
     CurrentDir(#[source] std::io::Error),
-    #[error("cargo-dylint is not installed or not working (install with `cargo install cargo-dylint dylint-link`)")]
+    #[error(
+        "cargo-dylint is not installed or not working (install with `cargo install cargo-dylint dylint-link`)"
+    )]
     CargoDylintMissing,
     #[error("failed to run {what}: {source}")]
     Spawn {
@@ -55,6 +69,38 @@ pub enum LintError {
         #[source]
         source: std::io::Error,
     },
+    #[error(transparent)]
+    PythonConfig(#[from] trigpoint_pylint::config::ConfigError),
+    #[error(transparent)]
+    Python(#[from] trigpoint_pylint::PylintError),
+}
+
+/// Which checks this invocation will run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Targets {
+    pub rust: bool,
+    pub python: bool,
+}
+
+impl Targets {
+    pub fn none(self) -> bool {
+        !self.rust && !self.python
+    }
+
+    /// Explicit flags win; otherwise each target is enabled by the evidence
+    /// that it exists.
+    pub fn detect(rust_flag: bool, python_flag: bool, has_dylint: bool, has_python: bool) -> Self {
+        if rust_flag || python_flag {
+            return Self {
+                rust: rust_flag,
+                python: python_flag,
+            };
+        }
+        Self {
+            rust: has_dylint,
+            python: has_python,
+        }
+    }
 }
 
 pub fn run(args: LintArgs) -> Result<ExitCode, LintError> {
@@ -63,57 +109,58 @@ pub fn run(args: LintArgs) -> Result<ExitCode, LintError> {
         None => env::current_dir().map_err(LintError::CurrentDir)?,
     };
 
-    if find_triglint_toml(&dir).is_none() {
+    let config = find_triglint_toml(&dir);
+    if config.is_none() {
         eprintln!(
             "trigp: warning: no triglint.toml found walking up from {}; triglint will have nothing to check",
             dir.display()
         );
     }
-
-    ensure_cargo_dylint(&dir)?;
-
-    if args.fresh {
-        clear_analysis_cache(&dir)?;
-    }
-
-    let flags = merged_dylint_rustflags(
-        env::var("DYLINT_RUSTFLAGS").ok().as_deref(),
-        !args.no_deps_mir,
+    let has_python = match config.as_deref() {
+        Some(path) => trigpoint_pylint::config::parse_file(path)?.is_some(),
+        None => false,
+    };
+    let targets = Targets::detect(
+        args.rust,
+        args.python,
+        dylint::has_metadata(&dir),
+        has_python,
     );
 
-    let mut command = Command::new("cargo");
-    command.arg("dylint").arg("--all").current_dir(&dir);
-    if let Some(flags) = flags {
-        command.env("DYLINT_RUSTFLAGS", flags);
+    if targets.none() {
+        eprintln!(
+            "trigp: no lint target detected in {}: add [workspace.metadata.dylint] for the Rust lint, or a [python] section to triglint.toml for the Python lint",
+            dir.display()
+        );
+        return Ok(ExitCode::SUCCESS);
     }
-    if !args.cargo_args.is_empty() {
-        command.arg("--");
-        command.args(&args.cargo_args);
+
+    let mut python_failed = false;
+    if targets.python {
+        match config.as_deref() {
+            Some(path) => python_failed = python::run(path)?.failed(),
+            None => eprintln!("trigp: --python given but no triglint.toml was found"),
+        }
     }
-    let status = command.status().map_err(|source| LintError::Spawn {
-        what: "cargo dylint",
-        source,
-    })?;
-    Ok(match status.code() {
-        Some(0) => ExitCode::SUCCESS,
-        Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
-        None => ExitCode::FAILURE,
-    })
+
+    let mut rust_code = 0;
+    if targets.rust {
+        rust_code = dylint::run(&dir, args.fresh, !args.no_deps_mir, &args.cargo_args)?;
+    }
+
+    Ok(exit_code(rust_code, python_failed))
 }
 
-/// Appends -Zalways-encode-mir to any user-provided DYLINT_RUSTFLAGS,
-/// without duplicating it. `None` means "leave the variable unset".
-pub fn merged_dylint_rustflags(existing: Option<&str>, deps_mir: bool) -> Option<String> {
-    if !deps_mir {
-        return existing.map(str::to_owned);
+/// A failure from either target fails the run; the Rust exit code is preserved
+/// when it is the one that failed.
+fn exit_code(rust_code: i32, python_failed: bool) -> ExitCode {
+    if rust_code != 0 {
+        return ExitCode::from(u8::try_from(rust_code).unwrap_or(1));
     }
-    match existing {
-        None => Some(ALWAYS_ENCODE_MIR.to_owned()),
-        Some(flags) if flags.split_whitespace().any(|f| f == ALWAYS_ENCODE_MIR) => {
-            Some(flags.to_owned())
-        }
-        Some(flags) => Some(format!("{flags} {ALWAYS_ENCODE_MIR}")),
+    if python_failed {
+        return ExitCode::FAILURE;
     }
+    ExitCode::SUCCESS
 }
 
 /// Walks up from `start` looking for triglint.toml, mirroring triglint's own
@@ -129,91 +176,10 @@ pub fn find_triglint_toml(start: &Path) -> Option<PathBuf> {
     }
 }
 
-fn ensure_cargo_dylint(dir: &Path) -> Result<(), LintError> {
-    let output = Command::new("cargo")
-        .args(["dylint", "--version"])
-        .current_dir(dir)
-        .output()
-        .map_err(|source| LintError::Spawn {
-            what: "cargo dylint --version",
-            source,
-        })?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(LintError::CargoDylintMissing)
-    }
-}
-
-/// Removes dylint's per-toolchain analysis target dir (not the built lint
-/// libraries), forcing recompilation of the analyzed workspace.
-fn clear_analysis_cache(dir: &Path) -> Result<(), LintError> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version", "1"])
-        .current_dir(dir)
-        .output()
-        .map_err(|source| LintError::Spawn {
-            what: "cargo metadata",
-            source,
-        })?;
-    if !output.status.success() {
-        return Err(LintError::Metadata {
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let Some(target_dir) = metadata["target_directory"].as_str() else {
-        return Err(LintError::Metadata {
-            stderr: "metadata has no target_directory".to_owned(),
-        });
-    };
-    let cache = Path::new(target_dir).join("dylint").join("target");
-    if cache.exists() {
-        fs::remove_dir_all(&cache).map_err(|source| LintError::ClearCache {
-            path: cache.clone(),
-            source,
-        })?;
-        eprintln!("trigp: cleared dylint analysis cache at {}", cache.display());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn merges_flag_into_empty_env() {
-        assert_eq!(
-            merged_dylint_rustflags(None, true).as_deref(),
-            Some(ALWAYS_ENCODE_MIR)
-        );
-    }
-
-    #[test]
-    fn appends_flag_to_existing_flags() {
-        assert_eq!(
-            merged_dylint_rustflags(Some("-Zthreads=2"), true).as_deref(),
-            Some("-Zthreads=2 -Zalways-encode-mir")
-        );
-    }
-
-    #[test]
-    fn does_not_duplicate_flag() {
-        assert_eq!(
-            merged_dylint_rustflags(Some("-Zalways-encode-mir"), true).as_deref(),
-            Some(ALWAYS_ENCODE_MIR)
-        );
-    }
-
-    #[test]
-    fn no_deps_mir_leaves_env_untouched() {
-        assert_eq!(merged_dylint_rustflags(None, false), None);
-        assert_eq!(
-            merged_dylint_rustflags(Some("-Zthreads=2"), false).as_deref(),
-            Some("-Zthreads=2")
-        );
-    }
+    use std::fs;
 
     #[test]
     fn finds_config_walking_up() {
@@ -226,5 +192,71 @@ mod tests {
             Some(base.join("triglint.toml"))
         );
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn detection_follows_the_evidence() {
+        assert_eq!(
+            Targets::detect(false, false, true, false),
+            Targets {
+                rust: true,
+                python: false
+            }
+        );
+        assert_eq!(
+            Targets::detect(false, false, false, true),
+            Targets {
+                rust: false,
+                python: true
+            }
+        );
+        assert_eq!(
+            Targets::detect(false, false, true, true),
+            Targets {
+                rust: true,
+                python: true
+            }
+        );
+        assert!(Targets::detect(false, false, false, false).none());
+    }
+
+    #[test]
+    fn explicit_flags_override_detection() {
+        // `--python` in a dylint workspace must not also run cargo-dylint.
+        assert_eq!(
+            Targets::detect(false, true, true, true),
+            Targets {
+                rust: false,
+                python: true
+            }
+        );
+        // `--rust` runs the Rust lint even where no dylint metadata was found.
+        assert_eq!(
+            Targets::detect(true, false, false, true),
+            Targets {
+                rust: true,
+                python: false
+            }
+        );
+    }
+
+    #[test]
+    fn either_target_failing_fails_the_run() {
+        assert_eq!(
+            format!("{:?}", exit_code(0, false)),
+            format!("{:?}", ExitCode::SUCCESS)
+        );
+        assert_eq!(
+            format!("{:?}", exit_code(0, true)),
+            format!("{:?}", ExitCode::FAILURE)
+        );
+        assert_eq!(
+            format!("{:?}", exit_code(101, false)),
+            format!("{:?}", ExitCode::from(101u8))
+        );
+        assert_eq!(
+            format!("{:?}", exit_code(101, true)),
+            format!("{:?}", ExitCode::from(101u8))
+        );
     }
 }

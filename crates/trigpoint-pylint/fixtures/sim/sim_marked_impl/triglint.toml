@@ -1,0 +1,8 @@
+[python]
+source_roots = ["src"]
+
+[python.sim]
+roots = ["app.harness"]
+
+[python.markers]
+deterministic = ["trigpoint_shims.DeterministicShim"]

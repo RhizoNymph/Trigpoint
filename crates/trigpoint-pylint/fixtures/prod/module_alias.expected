@@ -1,0 +1,2 @@
+deny shim-nondeterminism module_alias.py:3:7 time time.time unblessed
+deny shim-nondeterminism module_alias.py:7:12 time time.time unblessed

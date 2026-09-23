@@ -1,0 +1,3 @@
+deny sim-nondeterminism src/app/collect.py:2:15 hash_order set literal witness=app.harness > app.collect
+deny sim-nondeterminism src/app/collect.py:3:13 hash_order set() call witness=app.harness > app.collect
+deny sim-nondeterminism src/app/collect.py:4:21 hash_order set comprehension witness=app.harness > app.collect

@@ -1,0 +1,8 @@
+error[sim-nondeterminism]: nondeterminism sink `time.time` (time) is reachable from a simulation root
+ --> src/app/inner.py:5:12
+  |
+5 |     return time.time()
+  |            ^^^^^^^^^^^ time sink named here
+  |
+  = note: matched the call sink `time.time`
+  = note: witness: app.harness > app.middle > app.inner

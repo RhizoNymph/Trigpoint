@@ -1,0 +1,1 @@
+warn unresolved src/app/plugin.py:2:1 opaque-import thirdparty.widget witness=app.harness > app.plugin

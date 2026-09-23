@@ -1,0 +1,9 @@
+error[shim-nondeterminism]: nondeterminism sink `time.time` (time) named outside a shim implementation
+ --> direct_call.py:5:12
+  |
+5 |     return time.time() - start
+  |            ^^^^^^^^^^^ time sink named here
+  |
+  = note: not inside any shim protocol implementation
+  = note: matched the call sink `time.time`
+  = note: route this through a shim protocol implementation, or grant the capability to the enclosing one
