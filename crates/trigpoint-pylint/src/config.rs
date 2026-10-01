@@ -1,15 +1,13 @@
-//! The `[python]` section of `triglint.toml`: schema, discovery, resolution.
+//! The `[python]` section of `triglint.toml`: resolution and discovery.
 //!
-//! # Temporary home
-//!
-//! This module is a **temporary** home for the Python half of the
-//! `triglint.toml` schema. The sibling `feat/shared-config` workstream is
-//! extracting triglint's Rust schema (`triglint/src/config.rs`) into a shared
-//! stable crate `crates/trigpoint-config`; when that lands, everything in this
-//! file merges into it and `trigpoint-pylint` depends on the shared crate
-//! instead. Until then this module parses the same file *tolerantly*: it reads
-//! only `[python]` and ignores every other top-level key, so the two schemas
-//! can coexist in one file while they live in two crates.
+//! The schema itself lives in `trigpoint-config` (`trigpoint_config::python`),
+//! the shared stable crate holding the whole `triglint.toml` contract; this
+//! module re-exports it and adds what only the Python analysis needs: the
+//! queryable [`Resolved`] view (which folds in the builtin sink database from
+//! [`crate::sinks`]) and discovery anchored at a start directory. Parsing goes
+//! through the full shared [`trigpoint_config::Config`], so the file is
+//! validated strictly end to end — a typo in either the Rust or the Python
+//! half is an error for every consumer.
 //!
 //! Discovery mirrors triglint exactly: `$TRIGLINT_CONFIG` if set, otherwise the
 //! nearest `triglint.toml` walking up from a start directory.
@@ -19,16 +17,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
 use thiserror::Error;
 
+pub use trigpoint_config::python::{
+    Markers, Opaque, PythonConfig, ShimSpec, SimSection, SinkSpec,
+};
+pub use trigpoint_config::{CONFIG_ENV, CONFIG_FILE};
+
 use crate::sinks::{SinkDb, SinkRule, builtin_sinks, builtin_trusted_modules};
-
-/// Environment variable overriding config discovery.
-pub const CONFIG_ENV: &str = "TRIGLINT_CONFIG";
-
-/// File name discovered by walking up from the start directory.
-pub const CONFIG_FILE: &str = "triglint.toml";
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -44,129 +40,6 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
-}
-
-/// Tolerant view of `triglint.toml`. Unknown top-level keys belong to the Rust
-/// linter's schema and are deliberately ignored here (no `deny_unknown_fields`
-/// at this level); the `[python]` table itself is strict.
-#[derive(Debug, Default, Deserialize)]
-struct TriglintFile {
-    #[serde(default)]
-    python: Option<PythonConfig>,
-}
-
-/// The `[python]` section.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PythonConfig {
-    /// Import-resolution roots, relative to the config file's directory.
-    #[serde(default = "default_source_roots")]
-    pub source_roots: Vec<PathBuf>,
-    #[serde(default)]
-    pub sim: SimSection,
-    /// Shim protocols and the capabilities their implementations are granted.
-    /// A non-empty list enables prod mode.
-    #[serde(default)]
-    pub shims: Vec<ShimSpec>,
-    #[serde(default)]
-    pub markers: Markers,
-    /// Merge the builtin sink database into `sinks`. Default true.
-    #[serde(default = "default_true")]
-    pub builtin_sinks: bool,
-    #[serde(default)]
-    pub sinks: Vec<SinkSpec>,
-    #[serde(default)]
-    pub opaque: Opaque,
-}
-
-impl Default for PythonConfig {
-    fn default() -> Self {
-        Self {
-            source_roots: default_source_roots(),
-            sim: SimSection::default(),
-            shims: Vec::new(),
-            markers: Markers::default(),
-            builtin_sinks: true,
-            sinks: Vec::new(),
-            opaque: Opaque::default(),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SimSection {
-    /// Dotted module paths of simulation harness entry modules. A non-empty
-    /// list enables sim mode.
-    #[serde(default)]
-    pub roots: Vec<String>,
-}
-
-/// `[[python.shims]]`: implementations of `protocol` may name sinks carrying
-/// the `grants` capabilities.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ShimSpec {
-    /// Qualified class name of the shim protocol, e.g. `myproj.shims.ClockShim`.
-    pub protocol: String,
-    pub grants: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Markers {
-    /// Qualified class names whose presence in a class's bases declares
-    /// "this implementation claims determinism" — it receives no grants.
-    #[serde(default = "default_deterministic_markers")]
-    pub deterministic: Vec<String>,
-}
-
-impl Default for Markers {
-    fn default() -> Self {
-        Self {
-            deterministic: default_deterministic_markers(),
-        }
-    }
-}
-
-/// `[[python.sinks]]`: extra sinks merged with the builtin database.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SinkSpec {
-    /// Free-form capability label shown in diagnostics (e.g. "time").
-    pub capability: String,
-    /// Exact qualified-name matches, e.g. `arrow.utcnow`.
-    #[serde(default)]
-    pub calls: Vec<String>,
-    /// Whole-module fences: any name under the module (and importing it inside
-    /// sim scope) is a sink.
-    #[serde(default)]
-    pub modules: Vec<String>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Opaque {
-    /// Modules that may be imported inside sim scope without analyzable
-    /// source, in addition to the builtin trusted set.
-    #[serde(default)]
-    pub trusted_modules: Vec<String>,
-    /// Qualified names permitted to be reached dynamically/opaquely without an
-    /// `unresolved` warning.
-    #[serde(default)]
-    pub allow: Vec<String>,
-}
-
-fn default_source_roots() -> Vec<PathBuf> {
-    vec![PathBuf::from(".")]
-}
-
-fn default_deterministic_markers() -> Vec<String> {
-    vec!["trigpoint_shims.DeterministicShim".to_owned()]
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// A resolved, queryable view of `[python]`, anchored at the config file's
@@ -285,10 +158,10 @@ pub fn parse_file(path: &Path) -> Result<Option<PythonConfig>, ConfigError> {
     })
 }
 
-/// Parses config text, ignoring everything outside `[python]`.
+/// Parses config text through the full shared schema and keeps `[python]`.
 pub fn parse_str(text: &str) -> Result<Option<PythonConfig>, toml::de::Error> {
-    let file: TriglintFile = toml::from_str(text)?;
-    Ok(file.python)
+    let config: trigpoint_config::Config = toml::from_str(text)?;
+    Ok(config.python)
 }
 
 /// Walks up from `start` looking for `triglint.toml`.
@@ -317,7 +190,8 @@ mod tests {
     use super::*;
 
     const FULL: &str = r#"
-        # Keys belonging to the Rust linter's schema must be ignored here.
+        # Keys belonging to the Rust linter's schema parse under the shared
+        # strict schema alongside [python].
         builtin_sinks = false
 
         [sim]
@@ -363,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn full_schema_parses_and_ignores_rust_keys() {
+    fn full_schema_parses_alongside_rust_keys() {
         let config = resolved(FULL);
         assert_eq!(config.source_roots(), [PathBuf::from("/proj/src")]);
         assert_eq!(config.sim_roots(), ["myproj.sim.harness"]);
@@ -405,6 +279,13 @@ mod tests {
     fn unknown_python_keys_are_rejected() {
         let error = parse_str("[python]\nsource_rootz = []\n").expect_err("should reject typos");
         assert!(error.to_string().contains("source_rootz"), "{error}");
+    }
+
+    #[test]
+    fn unknown_rust_keys_are_now_rejected_too() {
+        // Under the split schemas this was silently ignored; the shared
+        // schema validates the whole file for every consumer.
+        assert!(parse_str("[nonsense]\nkey = 1\n").is_err());
     }
 
     #[test]

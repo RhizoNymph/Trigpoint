@@ -11,6 +11,6 @@ annotate-snippets = "=0.12.16"
 ruff_python_ast = "=0.0.13"
 ruff_python_parser = "=0.0.13"
 ruff_text_size = "=0.0.13"
-serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.12"
 toml = "0.9.12"
+trigpoint-config = { path = "../trigpoint-config" }
