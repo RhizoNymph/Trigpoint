@@ -29,6 +29,12 @@ deterministic implementations — and a linter proves it.
 - **`trigpoint-shims`** — the `DeterministicShim` marker trait: mark your
   simulation shim impls; triglint holds them to a zero-nondeterminism
   standard.
+- **`trigp spec check`** — a stopgap validator for hand-written invariant
+  files (`spec/invariants/<id>.toml`): each declares the evidence kinds it
+  requires and may point at the evidence it has; the check reports what's
+  missing, what doesn't resolve (tests are matched against
+  `cargo test -- --list`), and what hasn't been reviewed. See
+  [`docs/features/trigpoint-core.md`](docs/features/trigpoint-core.md).
 - **`trigp lint`** — CLI orchestration of cargo-dylint (correct env flags,
   cache busting, exit codes) so you don't need any dylint folklore.
 
@@ -73,7 +79,7 @@ a marked sim impl, and feature-gated violations.
 | path | contents |
 |---|---|
 | `crates/trigpoint-cli` | the `trigp` binary (package name `trigpoint`) |
-| `crates/trigpoint-core` | spec/invariant/evidence engine (future work) |
+| `crates/trigpoint-core` | spec/invariant/evidence engine: today the `trigp spec check` validator |
 | `crates/trigpoint-shims` | `DeterministicShim` marker trait |
 | `triglint/` | the dylint lint library (own nightly-pinned workspace) |
 | `examples/sim-demo/` | end-to-end demo workspace |

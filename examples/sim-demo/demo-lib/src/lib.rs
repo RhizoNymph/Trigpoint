@@ -55,3 +55,32 @@ pub fn run_tick<C: ClockShim>(clock: &mut C) -> u64 {
 pub fn wait_a_bit() {
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sim_clock_is_strictly_monotonic() {
+        let mut clock = SimClock::new(0);
+        let mut last = clock.now_millis();
+        for _ in 0..100 {
+            let now = clock.now_millis();
+            assert!(now > last, "virtual time went backwards: {last} -> {now}");
+            last = now;
+        }
+    }
+
+    #[test]
+    fn sim_clock_first_tick_follows_start() {
+        let mut clock = SimClock::new(41);
+        assert_eq!(clock.now_millis(), 42);
+    }
+
+    #[test]
+    fn run_tick_returns_the_shim_reading() {
+        let mut clock = SimClock::new(7);
+        let tick = run_tick(&mut clock);
+        assert_eq!(tick, 8);
+    }
+}

@@ -34,8 +34,14 @@ Overview:
       class for analyzed Python codebases. Same role, same contract, no
       runtime behavior.
     trigpoint-core: >
-      Future home of the spec/invariant/evidence bookkeeping engine.
-      Placeholder today.
+      Spec/invariant/evidence bookkeeping engine. Today: the stopgap spec
+      check — loads hand-written spec/invariants/<id>.toml files (an
+      invariant's claim, the evidence kinds it requires, pointers to the
+      evidence it has, and per-kind agent/human review marks), resolves
+      test pointers against `cargo test -- --list`, checks commit-pinned
+      reviews for staleness via git, and reports missing, unresolved, and
+      unreviewed evidence. Decisions and the capability taxonomy are still
+      future work.
     trigpoint-pylint: >
       Stable-workspace library enforcing the same DST contract on Python
       sources, in Rust on ruff's parser (ruff_python_parser/ruff_python_ast
@@ -56,8 +62,8 @@ Overview:
       Cargo.toml runs triglint via cargo-dylint (DYLINT_RUSTFLAGS=-Zalways-
       encode-mir merged in, --fresh cache busting), a [python] section in
       triglint.toml runs trigpoint-pylint in-process; --rust/--python
-      restrict. A deny-level finding from either fails the run. Spec database
-      and evidence aggregation are future work.
+      restrict. A deny-level finding from either fails the run. `trigp spec
+      check` runs trigpoint-core's spec check over spec/invariants/.
     examples: >
       Example workspaces used as end-to-end integration targets for triglint
       (sim-demo: a toy Rust sim harness with clock shims) and for the designed
@@ -125,6 +131,19 @@ Features Index:
     entry_points: [crates/trigpoint-shims/src/lib.rs]
     depends_on: []
     doc: docs/features/triglint.md
+  spec_check:
+    description: >
+      Stopgap validator for hand-written invariant files: per invariant,
+      which required evidence kinds are missing, which pointers (tests via
+      the cargo test listing, lint providers, files) do not resolve, which
+      evidence is unreviewed by agent/human, and which commit-pinned reviews
+      are stale. Errors always fail; gaps fail under --strict.
+    entry_points:
+      - crates/trigpoint-core/src/check.rs
+      - crates/trigpoint-cli/src/spec.rs
+      - spec/invariants/
+    depends_on: []
+    doc: docs/features/trigpoint-core.md
   python_linter:
     description: >
       Enforces the DST shim contract on Python codebases, in Rust on ruff's

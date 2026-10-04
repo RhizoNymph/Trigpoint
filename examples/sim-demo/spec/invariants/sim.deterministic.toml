@@ -1,0 +1,17 @@
+[invariant]
+id = "sim.deterministic"
+statement = "No nondeterminism sink is reachable from sim_harness::main."
+kind = "system"
+derived_from = "decision.nondeterminism"
+requires = ["lint"]
+rationale = """
+The whole point of the shim architecture: triglint's sim mode proves it by
+whole-program reachability, with sim_unresolved warnings as the stated
+defeaters.
+"""
+
+[evidence]
+lint = "triglint"
+
+[review]
+lint = { agent = true, human = true }
