@@ -1,5 +1,6 @@
 mod lint;
 mod spec;
+mod spec_diff;
 
 use std::process::ExitCode;
 
@@ -22,9 +23,7 @@ enum Command {
     /// cargo-dylint for Rust (with dependency MIR encoding set up so
     /// cross-crate analysis works) and trigpoint-pylint for Python.
     Lint(lint::LintArgs),
-    /// Work with the invariant spec: `spec check` validates
-    /// spec/invariants/*.toml and reports missing, unresolved, and
-    /// unreviewed evidence.
+    /// Validate invariant specs or diff a branch against its base.
     Spec(spec::SpecArgs),
 }
 

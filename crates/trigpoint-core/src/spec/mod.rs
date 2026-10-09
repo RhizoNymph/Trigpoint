@@ -12,6 +12,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
+pub mod diff;
 pub mod load;
 
 /// The kinds of evidence an invariant can require or point at. The vocabulary
