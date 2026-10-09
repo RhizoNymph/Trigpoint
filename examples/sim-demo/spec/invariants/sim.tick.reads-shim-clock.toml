@@ -1,0 +1,9 @@
+[invariant]
+id = "sim.tick.reads-shim-clock"
+statement = "run_tick returns exactly the reading of the clock shim it was given."
+kind = "domain"
+property = "postcondition"
+requires = ["example"]
+
+[evidence]
+example = "demo_lib::tests::run_tick_returns_the_shim_reading"

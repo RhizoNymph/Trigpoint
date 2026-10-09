@@ -1,0 +1,17 @@
+[invariant]
+id = "sim.clock.monotonic"
+statement = "SimClock::now_millis returns strictly increasing values across calls."
+kind = "system"
+derived_from = "decision.nondeterminism"
+requires = ["example", "property"]
+rationale = """
+Virtual time must only move forward or simulated timeouts and orderings
+become meaningless. The property form (any start, any number of ticks) is
+still owed; only the example exists.
+"""
+
+[evidence]
+example = "demo_lib::tests::sim_clock_is_strictly_monotonic"
+
+[review]
+example = { agent = true, human = false }

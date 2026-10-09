@@ -19,3 +19,16 @@ calls the hidden dependency sleep — both are caught cross-crate, which is
 why `trigp` runs the build with `DYLINT_RUSTFLAGS=-Zalways-encode-mir`.
 Use `trigp lint --fresh` if you toggle MIR flags between runs; the flag
 change alone does not invalidate cargo's cache.
+
+## Spec check
+
+`spec/invariants/` seeds the stopgap spec check with three invariants over
+this demo: one fully evidenced and reviewed (`sim.deterministic`, backed by
+triglint), one missing a required evidence kind (`sim.clock.monotonic` owes
+a property test), and one with evidence nobody has reviewed yet
+(`sim.tick.reads-shim-clock`). From the repo root:
+
+```sh
+trigp spec check -C examples/sim-demo            # builds the demo's tests to resolve pointers
+trigp spec check -C examples/sim-demo --no-resolve --strict   # fast; exits 1 on the gaps
+```

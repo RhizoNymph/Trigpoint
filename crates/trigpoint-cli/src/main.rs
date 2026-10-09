@@ -1,4 +1,5 @@
 mod lint;
+mod spec;
 
 use std::process::ExitCode;
 
@@ -21,12 +22,23 @@ enum Command {
     /// cargo-dylint for Rust (with dependency MIR encoding set up so
     /// cross-crate analysis works) and trigpoint-pylint for Python.
     Lint(lint::LintArgs),
+    /// Work with the invariant spec: `spec check` validates
+    /// spec/invariants/*.toml and reports missing, unresolved, and
+    /// unreviewed evidence.
+    Spec(spec::SpecArgs),
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Lint(args) => match lint::run(args) {
+            Ok(code) => code,
+            Err(error) => {
+                eprintln!("trigp: error: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Spec(args) => match spec::run(args) {
             Ok(code) => code,
             Err(error) => {
                 eprintln!("trigp: error: {error}");
