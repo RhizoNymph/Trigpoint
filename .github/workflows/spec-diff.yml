@@ -1,0 +1,33 @@
+name: Invariant spec diff
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: spec-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  spec-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test spec diff
+        run: cargo test --locked -p trigpoint-core -p trigpoint
+      - name: Build CLI
+        id: build
+        run: cargo build --locked -p trigpoint --bin trigp
+      - name: Report invariant changes
+        run: ./target/debug/trigp spec diff --spec-dir examples/sim-demo/spec/invariants
+      - name: Update PR comment
+        if: always() && !cancelled() && steps.build.outcome == 'success' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./target/debug/trigp spec diff --spec-dir examples/sim-demo/spec/invariants --comment

@@ -131,6 +131,9 @@ trigp spec check [-C <dir>] [--spec-dir spec/invariants] [--strict] [--no-resolv
 `--no-resolve` skips the cargo build (fast spec-only linting; test pointers
 are then taken on faith and pinned reviews of tests report as unassessable).
 
+For committed branch comparisons and persistent CI comments, see
+[`trigp spec diff`](spec-diff.md).
+
 ## Related files
 
 | file | role |

@@ -27,6 +27,8 @@ pub enum SpecAction {
     /// Report, per invariant, which required evidence kinds are missing,
     /// which pointers do not resolve, and what has not been reviewed.
     Check(CheckArgs),
+    /// Compare committed invariant specs and optionally update a GitHub PR comment.
+    Diff(crate::spec_diff::DiffArgs),
 }
 
 #[derive(clap::Args)]
@@ -49,6 +51,8 @@ pub struct CheckArgs {
 
 #[derive(Debug, Error)]
 pub enum SpecError {
+    #[error(transparent)]
+    Diff(#[from] crate::spec_diff::DiffError),
     #[error("failed to resolve current directory: {0}")]
     CurrentDir(#[source] std::io::Error),
     #[error(transparent)]
@@ -60,6 +64,7 @@ pub enum SpecError {
 pub fn run(args: SpecArgs) -> Result<ExitCode, SpecError> {
     match args.action {
         SpecAction::Check(args) => run_check(args),
+        SpecAction::Diff(args) => Ok(crate::spec_diff::run(args)?),
     }
 }
 
