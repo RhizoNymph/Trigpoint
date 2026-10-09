@@ -1,4 +1,5 @@
 //! Git snapshot comparison and optional GitHub PR comment publication.
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -7,6 +8,7 @@ use std::process::{Command, ExitCode, Stdio};
 use serde_json::{Value, json};
 use thiserror::Error;
 use trigpoint_core::spec::diff::{self, Snapshot};
+use trigpoint_core::spec::{EvidenceKind, PointerScheme, ReviewMark, source};
 
 #[derive(clap::Args)]
 pub struct DiffArgs {
@@ -135,6 +137,210 @@ fn snapshot(root: &Path, commit: &str, spec_dir: &str) -> Result<Snapshot, DiffE
     Ok(result)
 }
 
+fn source_index(root: &Path, commit: &str, workspace: &str) -> Result<source::Index, DiffError> {
+    let listing = git(
+        root,
+        &[
+            "ls-tree",
+            "-r",
+            "-z",
+            commit,
+            "--",
+            &format!(
+                ":(literal){}",
+                if workspace.is_empty() { "." } else { workspace }
+            ),
+        ],
+    )?;
+    let mut files = source::Files::new();
+    for entry in listing.split('\0').filter(|s| !s.is_empty()) {
+        let (meta, path) = entry
+            .split_once('\t')
+            .ok_or_else(|| DiffError("invalid git tree entry".into()))?;
+        let path = Path::new(path);
+        if path.extension().is_none_or(|e| e != "rs")
+            && path.file_name().is_none_or(|n| n != "Cargo.toml")
+        {
+            continue;
+        }
+        let fields: Vec<_> = meta.split_whitespace().collect();
+        if fields.len() == 3 && matches!(fields[0], "100644" | "100755") && fields[1] == "blob" {
+            files.insert(
+                path.to_owned(),
+                git(root, &["cat-file", "blob", fields[2]])?,
+            );
+        }
+    }
+    Ok(source::Index::build(&files))
+}
+fn enriched_snapshot(
+    root: &Path,
+    commit: &str,
+    spec_dir: &str,
+    workspace: &str,
+) -> Result<Snapshot, DiffError> {
+    let mut spec = snapshot(root, commit, spec_dir)?;
+    if spec.values().any(|e| {
+        e.file
+            .evidence
+            .iter()
+            .flat_map(|e| &e.0)
+            .any(|(kind, _)| kind.pointer_scheme() == PointerScheme::Test)
+    }) {
+        source::enrich(&mut spec, &source_index(root, commit, workspace)?);
+    }
+    Ok(spec)
+}
+fn renames(root: &Path, base: &str, head: &str) -> Result<BTreeMap<PathBuf, PathBuf>, DiffError> {
+    let output = git(
+        root,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--name-status",
+            "-z",
+            "--find-renames",
+            base,
+            head,
+            "--",
+        ],
+    )?;
+    let mut fields = output.split('\0').filter(|s| !s.is_empty());
+    let mut result = BTreeMap::new();
+    while let Some(status) = fields.next() {
+        let old = fields
+            .next()
+            .ok_or_else(|| DiffError("invalid Git diff entry".into()))?;
+        if status.starts_with('R') || status.starts_with('C') {
+            let new = fields
+                .next()
+                .ok_or_else(|| DiffError("invalid Git rename entry".into()))?;
+            if status.starts_with('R') {
+                result.insert(old.into(), new.into());
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn review_scope(entry: &diff::Entry, kind: EvidenceKind) -> BTreeSet<String> {
+    let prefixes = [
+        format!("evidence.{kind} = "),
+        format!("test body.{kind}."),
+        format!("test docstring.{kind}."),
+    ];
+    entry
+        .facts
+        .iter()
+        .filter(|f| {
+            f.starts_with("invariant.")
+                || f.starts_with("filename = ")
+                || prefixes.iter().any(|p| f.starts_with(p))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Reviews describe an evidence kind. Unpinned flags cannot establish that a
+/// particular revision was reviewed; pins must match the head's reviewed scope.
+fn reviews(
+    root: &Path,
+    revision: &str,
+    spec_dir: &str,
+    workspace: &str,
+    spec: &mut Snapshot,
+    cache: &mut BTreeMap<String, Result<Snapshot, String>>,
+) {
+    for entry in spec.values_mut() {
+        entry
+            .facts
+            .retain(|f| !f.starts_with("agent review.") && !f.starts_with("human review."));
+        let kinds: BTreeSet<_> = entry
+            .file
+            .invariant
+            .requires
+            .iter()
+            .copied()
+            .chain(entry.file.evidence.iter().flat_map(|e| e.0.keys().copied()))
+            .chain(entry.file.review.iter().flat_map(|r| r.0.keys().copied()))
+            .collect();
+        for kind in kinds {
+            let review = entry.file.review.as_ref().and_then(|r| r.0.get(&kind));
+            for (role, mark) in [
+                ("agent", review.map(|r| &r.agent)),
+                ("human", review.map(|r| &r.human)),
+            ] {
+                let status = match mark {
+                    None | Some(ReviewMark::Flag(false)) => "Unreviewed".to_owned(),
+                    Some(ReviewMark::Flag(true)) => {
+                        "Reviewed (unpinned; freshness unknown)".to_owned()
+                    }
+                    Some(ReviewMark::Commit(pin)) => match resolve(root, pin) {
+                        Err(_) => format!("Unknown review commit {pin}"),
+                        Ok(commit) => {
+                            let snapshot = cache.entry(commit.clone()).or_insert_with(|| {
+                                enriched_snapshot(root, &commit, spec_dir, workspace)
+                                    .map_err(|e| e.to_string())
+                            });
+                            match snapshot {
+                                Err(_) => format!("Unknown at {pin}: review snapshot unavailable"),
+                                Ok(snapshot) => match snapshot.get(&entry.file.invariant.id) {
+                                    None => format!("Stale at {pin}: invariant absent or renamed"),
+                                    Some(old)
+                                        if review_scope(old, kind) != review_scope(entry, kind) =>
+                                    {
+                                        format!(
+                                            "Stale at {pin}: definition, pointers, or tests changed"
+                                        )
+                                    }
+                                    Some(old)
+                                        if !old.warnings.is_empty()
+                                            || !entry.warnings.is_empty() =>
+                                    {
+                                        format!("Unknown at {pin}: test source unresolved")
+                                    }
+                                    Some(_) if kind.pointer_scheme() != PointerScheme::Test => {
+                                        format!(
+                                            "Unknown at {pin}: non-test evidence content not assessed"
+                                        )
+                                    }
+                                    Some(_)
+                                        if entry
+                                            .file
+                                            .evidence
+                                            .as_ref()
+                                            .and_then(|e| e.0.get(&kind))
+                                            .is_none_or(|p| p.iter().next().is_none()) =>
+                                    {
+                                        format!("Unreviewed: no {kind} evidence")
+                                    }
+                                    Some(_)
+                                        if git(
+                                            root,
+                                            &["merge-base", "--is-ancestor", &commit, revision],
+                                        )
+                                        .is_err() =>
+                                    {
+                                        format!(
+                                            "Unknown at {pin}: not an ancestor of this revision"
+                                        )
+                                    }
+                                    Some(_) => format!(
+                                        "Reviewed at {pin} (definition and direct test source match)"
+                                    ),
+                                },
+                            }
+                        }
+                    },
+                };
+                entry
+                    .facts
+                    .insert(format!("{role} review.{kind} = {status}"));
+            }
+        }
+    }
+}
+
 fn event() -> Result<Value, DiffError> {
     match env::var_os("GITHUB_EVENT_PATH") {
         None => Ok(Value::Null),
@@ -219,15 +425,44 @@ pub fn run(args: DiffArgs) -> Result<ExitCode, DiffError> {
             "comparison requires exactly one merge base".into(),
         ));
     }
-    let before = snapshot(&root, bases[0], &spec_dir)?;
-    let after = snapshot(&root, &head, &spec_dir)?;
-    let changes = diff::compare(&before, &after);
-    let report = format!(
+    let mut before = enriched_snapshot(&root, bases[0], &spec_dir, prefix.trim())?;
+    let mut after = enriched_snapshot(&root, &head, &spec_dir, prefix.trim())?;
+    let mut cache = BTreeMap::new();
+    reviews(
+        &root,
+        bases[0],
+        &spec_dir,
+        prefix.trim(),
+        &mut before,
+        &mut cache,
+    );
+    reviews(
+        &root,
+        &head,
+        &spec_dir,
+        prefix.trim(),
+        &mut after,
+        &mut cache,
+    );
+    let changes = diff::compare_with_renames(&before, &after, &renames(&root, bases[0], &head)?);
+    let invalid_kind = changes.iter().any(|c| c.invalid_kind);
+    let mut report = format!(
         "## Invariant spec diff\n\nSpec: {}\n\nMerge base: `{}` → Head: `{head}`\n\n{}",
         diff::escape(&spec_dir),
         bases[0],
         diff::render(&changes)
     );
+    let warnings: BTreeSet<_> = before
+        .values()
+        .chain(after.values())
+        .flat_map(|e| e.warnings.iter())
+        .collect();
+    for warning in warnings {
+        report.push_str(&format!(
+            "\nUnresolved test source: {}\n",
+            diff::escape(warning)
+        ));
+    }
     print!("{report}");
     if args.comment {
         let repo = args
@@ -250,11 +485,16 @@ pub fn run(args: DiffArgs) -> Result<ExitCode, DiffError> {
             })?;
         post_comment(&dir, &repo, pr, &spec_dir, &report)?;
     }
-    Ok(if args.fail_on_change && !changes.is_empty() {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    })
+    if invalid_kind {
+        eprintln!("trigp: error: invariant kind cannot change (including across a rename)");
+    }
+    Ok(
+        if invalid_kind || (args.fail_on_change && !changes.is_empty()) {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        },
+    )
 }
 
 fn marker(spec_dir: &str) -> String {

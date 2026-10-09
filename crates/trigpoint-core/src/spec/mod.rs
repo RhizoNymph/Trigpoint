@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 pub mod diff;
 pub mod load;
+pub mod source;
 
 /// The kinds of evidence an invariant can require or point at. The vocabulary
 /// is deliberately closed: a kind outside it is a parse error, so a typo in

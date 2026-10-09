@@ -94,10 +94,10 @@ fn merge_base_committed_content_all_categories_and_exit_policy() {
     let output = repo.run(&[]);
     success(&output);
     let report = stdout(&output);
-    assert!(report.contains("| created | ✓ | — |"), "{report}");
-    assert!(report.contains("| removed | — | ✓ |"));
-    assert!(report.contains("statement = \"after\""));
-    assert!(report.contains("statement = \"before\""));
+    assert!(report.contains("| created | Created |"), "{report}");
+    assert!(report.contains("| removed | Removed |"));
+    assert!(report.contains("+ \"after\""));
+    assert!(report.contains("− \"before\""));
     assert!(!report.contains("base-only"));
     assert!(!report.contains("dirty"));
     assert_eq!(repo.run(&["--fail-on-change"]).status.code(), Some(1));
@@ -112,7 +112,7 @@ fn missing_directories_subdirectories_and_bad_refs() {
     repo.commit();
     let output = repo.run(&["-C", "project", "--base", "main"]);
     success(&output);
-    assert!(stdout(&output).contains("| new | ✓ |"));
+    assert!(stdout(&output).contains("| new | Created |"));
     let output = repo.run(&["--spec-dir", "absent"]);
     success(&output);
     assert!(stdout(&output).contains("No invariant changes."));
@@ -192,7 +192,7 @@ else:
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(stdout(&output).contains("| new | ✓ |"));
+        assert!(stdout(&output).contains("| new | Created |"));
     }
     // A no-change rerun must clear the old table, rather than leave stale rows.
     let output = repo
@@ -219,7 +219,7 @@ else:
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("permission denied"));
-    assert!(stdout(&output).contains("| new | ✓ |"));
+    assert!(stdout(&output).contains("| new | Created |"));
 }
 
 #[test]
@@ -230,5 +230,151 @@ fn spec_dir_can_be_repository_root() {
     repo.commit();
     let output = repo.run(&["--spec-dir", "."]);
     success(&output);
-    assert!(stdout(&output).contains("| a | ✓ |"));
+    assert!(stdout(&output).contains("| a | Created |"));
+}
+
+fn test_project(repo: &Repo, docs: &str, body: &str) {
+    fs::create_dir_all(repo.0.join("src")).unwrap();
+    fs::write(
+        repo.0.join("Cargo.toml"),
+        "[package]\nname='demo'\nversion='0.1.0'\nedition='2024'\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.0.join("src/lib.rs"),
+        format!("mod tests {{\n/// {docs}\n#[test]\nfn check() {{\n    {body}\n}}\n}}\n"),
+    )
+    .unwrap();
+}
+fn evidence_spec(repo: &Repo, agent: &str, human: &str) {
+    fs::create_dir_all(repo.0.join("spec/invariants")).unwrap();
+    fs::write(repo.0.join("spec/invariants/a.toml"), format!("[invariant]\nid='a'\nstatement='claim'\nkind='system'\nrequires=['example']\n[evidence]\nexample='demo::tests::check'\n[review]\nexample={{agent={agent}, human={human}}}\n")).unwrap();
+}
+fn table_cell(report: &str, name: &str) -> String {
+    let mut lines = report.lines().filter(|l| l.starts_with('|'));
+    let header: Vec<_> = lines.next().unwrap().split('|').map(str::trim).collect();
+    let column = header.iter().position(|c| *c == name).unwrap();
+    lines.next();
+    lines
+        .next()
+        .unwrap()
+        .split('|')
+        .nth(column)
+        .unwrap()
+        .trim()
+        .into()
+}
+
+#[test]
+fn test_body_and_docs_changes_without_spec_edits_and_review_freshness() {
+    let repo = Repo::new();
+    test_project(&repo, "Original docs", "assert_eq!(1, 1);");
+    evidence_spec(&repo, "false", "false");
+    repo.commit();
+    let reviewed = repo.git(&["rev-parse", "HEAD"]);
+    evidence_spec(&repo, &format!("'{reviewed}'"), "true");
+    repo.commit();
+    repo.git(&["switch", "-c", "feature"]);
+    test_project(&repo, "Revised docs", "assert_eq!(2, 2);");
+    repo.commit();
+    let output = repo.run(&[]);
+    success(&output);
+    let report = stdout(&output);
+    assert_eq!(table_cell(&report, "Statement"), "—");
+    assert_eq!(table_cell(&report, "Evidence"), "—");
+    let body = table_cell(&report, "Test body");
+    assert!(body.contains("−     assert&#95;eq!(1, 1);"), "{body}");
+    assert!(body.contains("+     assert&#95;eq!(2, 2);"));
+    assert!(!body.contains("docs"));
+    let docs = table_cell(&report, "Test docstring");
+    assert!(docs.contains("Original docs") && docs.contains("Revised docs"));
+    let agent = table_cell(&report, "Agent review");
+    assert!(
+        agent.contains("Reviewed at") && agent.contains("Stale at"),
+        "{agent}"
+    );
+    assert!(table_cell(&report, "Human review").contains("unpinned; freshness unknown"));
+    // Repinning the agent review to the changed test revision establishes review
+    // of the current direct test source; the human's unpinned claim stays unknown.
+    let changed = repo.git(&["rev-parse", "HEAD"]);
+    evidence_spec(&repo, &format!("'{changed}'"), "false");
+    repo.commit();
+    let report = stdout(&repo.run(&[]));
+    assert!(
+        table_cell(&report, "Agent review")
+            .contains(&format!("+ agent review.example = Reviewed at {changed}"))
+    );
+    assert!(table_cell(&report, "Human review").contains("Unreviewed"));
+}
+
+#[test]
+fn doc_only_change_leaves_body_column_empty() {
+    let repo = Repo::new();
+    test_project(&repo, "Old docs", "assert!(true);");
+    evidence_spec(&repo, "false", "false");
+    repo.commit();
+    repo.git(&["switch", "-c", "feature"]);
+    test_project(&repo, "New docs", "assert!(true);");
+    repo.commit();
+    let report = stdout(&repo.run(&[]));
+    assert_eq!(table_cell(&report, "Test body"), "—");
+    assert!(table_cell(&report, "Test docstring").contains("New docs"));
+}
+
+#[test]
+fn renames_are_one_row_and_kind_changes_fail_even_across_rename() {
+    let repo = Repo::new();
+    repo.spec(
+        "spec/invariants",
+        "old",
+        "A deliberately substantial invariant claim for rename detection.",
+    );
+    repo.commit();
+    repo.git(&["switch", "-c", "feature"]);
+    let old = repo.0.join("spec/invariants/old.toml");
+    let new = repo.0.join("spec/invariants/new.toml");
+    fs::write(
+        &new,
+        fs::read_to_string(&old)
+            .unwrap()
+            .replace("id=\"old\"", "id=\"new\""),
+    )
+    .unwrap();
+    fs::remove_file(old).unwrap();
+    repo.commit();
+    let output = repo.run(&[]);
+    success(&output);
+    let report = stdout(&output);
+    assert!(report.contains("| new | Renamed |"), "{report}");
+    assert!(table_cell(&report, "ID").contains("− \"old\"<br>+ \"new\""));
+    assert!(table_cell(&report, "Filename").contains("old.toml"));
+    assert!(table_cell(&report, "Filename").contains("new.toml"));
+    fs::write(
+        &new,
+        fs::read_to_string(&new)
+            .unwrap()
+            .replace("kind='system'", "kind='domain'"),
+    )
+    .unwrap();
+    repo.commit();
+    let output = repo.run(&[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout(&output).contains("kind cannot change"));
+}
+
+#[test]
+fn unresolved_test_source_does_not_claim_review_is_current() {
+    let repo = Repo::new();
+    evidence_spec(&repo, "false", "false");
+    repo.commit();
+    let pin = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["switch", "-c", "feature"]);
+    evidence_spec(&repo, &format!("'{pin}'"), "false");
+    repo.commit();
+    let output = repo.run(&[]);
+    success(&output);
+    let report = stdout(&output);
+    assert!(report.contains("Unresolved test source:"));
+    assert!(table_cell(&report, "Agent review").contains("test source unresolved"));
+    assert!(!table_cell(&report, "Agent review").contains("Reviewed at"));
 }

@@ -22,11 +22,12 @@ jobs:
       - name: Test spec diff
         run: cargo test --locked -p trigpoint-core -p trigpoint
       - name: Build CLI
+        id: build
         run: cargo build --locked -p trigpoint --bin trigp
       - name: Report invariant changes
         run: ./target/debug/trigp spec diff --spec-dir examples/sim-demo/spec/invariants
       - name: Update PR comment
-        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        if: always() && !cancelled() && steps.build.outcome == 'success' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./target/debug/trigp spec diff --spec-dir examples/sim-demo/spec/invariants --comment

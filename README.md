@@ -36,7 +36,8 @@ deterministic implementations — and a linter proves it.
   `cargo test -- --list`), and what hasn't been reviewed. See
   [`docs/features/trigpoint-core.md`](docs/features/trigpoint-core.md).
 - **`trigp spec diff`** — compare a branch against its merge base and show
-  created/removed invariants and content added/deleted in a Markdown table.
+  field-by-field changes, renames, test source/doc changes, and agent/human
+  review status in a Markdown table. Invariant kind changes fail the check.
   `--comment` creates or updates one GitHub PR comment for CI. See
   [`docs/features/spec-diff.md`](docs/features/spec-diff.md).
 - **`trigp lint`** — CLI orchestration of cargo-dylint (correct env flags,
