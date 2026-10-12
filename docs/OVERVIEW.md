@@ -69,6 +69,8 @@ Overview:
       (sim-demo: a toy Rust sim harness with clock shims) and for the designed
       Python linter (py-demo: the same shape in Python — ClockShim protocol,
       marked SimClock, quarantined violation module, [python] triglint.toml).
+      github-actions holds a copyable CI workflow that runs `trigp spec check
+      --strict` against sim-demo and publishes the report to the job summary.
   data_flow: >
     A user codebase declares shim traits (e.g. ClockShim) and marks sim impls
     with trigpoint_shims::DeterministicShim. It configures triglint.toml at

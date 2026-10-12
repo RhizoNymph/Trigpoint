@@ -1,0 +1,65 @@
+# Copy to .github/workflows/spec-check.yml to enable this example.
+# The demo intentionally has missing evidence/reviews, so strict mode fails.
+name: Invariant spec snapshot
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spec-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spec-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Use '.' when your spec/invariants and Cargo.toml are at the repo root.
+      SPEC_WORKSPACE: examples/sim-demo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check the PR's own snapshot, not GitHub's synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Commit-pinned reviews need their referenced history available.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # This build step is for the Trigpoint repository. In another repository,
+      # install a pinned version of trigp and update the executable path below.
+      - name: Build trigp
+        run: cargo build --locked -p trigpoint --bin trigp
+
+      - name: Check evidence and agent/human reviews
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/spec-check.txt"
+          status=0
+          ./target/debug/trigp spec check -C "$SPEC_WORKSPACE" --strict >"$report" 2>&1 || status=$?
+          cat "$report"
+
+          # Publish the report before returning its status, including on failure.
+          SPEC_CHECK_STATUS="$status" python3 - <<'PY'
+          import html
+          import os
+          from pathlib import Path
+          import subprocess
+
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          report = (Path(os.environ["RUNNER_TEMP"]) / "spec-check.txt").read_text()
+          status = os.environ["SPEC_CHECK_STATUS"]
+          result = "Passed" if status == "0" else f"Failed (exit {status})"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("## Invariant spec snapshot\n\n")
+              summary.write(f"Commit: `{sha}`\n\n")
+              summary.write(f"Workspace: {html.escape(os.environ['SPEC_WORKSPACE'])}\n\n")
+              summary.write(f"**{result}** — strict evidence and review check.\n\n")
+              summary.write("<pre>" + html.escape(report) + "</pre>\n")
+          PY
+          exit "$status"
