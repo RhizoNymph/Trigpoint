@@ -34,7 +34,8 @@ deterministic implementations — and a linter proves it.
   requires and may point at the evidence it has; the check reports what's
   missing, what doesn't resolve (tests are matched against
   `cargo test -- --list`), and what hasn't been reviewed. See
-  [`docs/features/trigpoint-core.md`](docs/features/trigpoint-core.md).
+  [`docs/features/trigpoint-core.md`](docs/features/trigpoint-core.md) and the
+  [snapshot-check CI example](examples/github-actions/README.md).
 - **`trigp spec diff`** — compare a branch against its merge base and show
   field-by-field changes, renames, test source/doc changes, and agent/human
   review status in a Markdown table. Invariant kind changes fail the check.
