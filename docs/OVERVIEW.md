@@ -9,7 +9,10 @@ Overview:
     enforces the deterministic-simulation-testing (DST) contract — all
     nondeterminism must flow through declared shim traits, and simulation
     builds must be fully deterministic. Motivation and the research
-    direction beyond the linter are recorded in docs/design.md.
+    direction beyond the linter are recorded in docs/design.md. Design
+    decisions about the tool itself are recorded as numbered records in
+    docs/decisions/ (0001: capabilities are one concept, spec references
+    the lint vocabulary).
   subsystems:
     triglint: >
       Dylint lint library (nightly-pinned, rustc_private). Sim mode:
